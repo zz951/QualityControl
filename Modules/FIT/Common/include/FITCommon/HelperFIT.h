@@ -18,14 +18,22 @@
 #define QC_MODULE_FIT_FITHELPER_H
 
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <unordered_map>
 #include <functional>
 #include <array>
 #include <vector>
-#include <DataFormatsFIT/Triggers.h>
+#include <bitset>
 
+#include "TH1D.h"
+#include "TH2F.h"
+
+#include <DataFormatsFIT/Triggers.h>
+#include "CommonDataFormat/BunchFilling.h"
+
+#include <FITCommon/HelperHist.h>
 namespace o2::quality_control_modules::fit
 {
 

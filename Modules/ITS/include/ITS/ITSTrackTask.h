@@ -18,18 +18,16 @@
 #define QC_MODULE_ITS_ITSTRACKTASK_H
 
 #include "QualityControl/TaskInterface.h"
-#include <TH1D.h>
-#include <TH2D.h>
 #include <DataFormatsITSMFT/TopologyDictionary.h>
 #include <ITSBase/GeometryTGeo.h>
 #include <Framework/TimingInfo.h>
-#include <TTree.h>
 #include <TLine.h>
+#include <TTree.h>
 #include "Common/TH1Ratio.h"
 #include "Common/TH2Ratio.h"
 
-class TH1D;
-class TH2D;
+class TH1;
+class TH2;
 
 using namespace o2::quality_control::core;
 using namespace o2::quality_control_modules::common;
@@ -73,7 +71,6 @@ class ITSTrackTask : public TaskInterface
 
   std::vector<TObject*> mPublishedObjects;
   TH1D* hNClusters;
-  TH1D* hNClustersReset;
   std::unique_ptr<TH1DRatio> hTrackEta;
   std::unique_ptr<TH1DRatio> hTrackPhi;
   TH1D* hVerticesRof;
@@ -84,9 +81,9 @@ class ITSTrackTask : public TaskInterface
   TH1D* hVertexContributors;
   TH1D* hAssociatedClusterFraction;
   TH1D* hNtracks;
-  TH1D* hNtracksReset;
   std::unique_ptr<TH2DRatio> hNClustersPerTrackEta;
   std::unique_ptr<TH2DRatio> hNClustersPerTrackPhi;
+  std::unique_ptr<TH2DRatio> hNClustersPerTrackPt;
   std::unique_ptr<TH2DRatio> hHitFirstLayerPhiAll;
   std::unique_ptr<TH2DRatio> hHitFirstLayerPhi4cls;
   std::unique_ptr<TH2DRatio> hHitFirstLayerPhi5cls;
@@ -94,6 +91,15 @@ class ITSTrackTask : public TaskInterface
   std::unique_ptr<TH2DRatio> hHitFirstLayerPhi7cls;
   TH2D* hClusterVsBunchCrossing;
   TH2D* hNClusterVsChipITS;
+  // Histograms for inv mass k0s, lambda
+  TH1D* hInvMassK0s;
+  TH1D* hInvMassLambda;
+  TH1D* hInvMassLambdaBar;
+  TH2D* hTrackPtVsEta;
+  TH2D* hTrackPtVsPhi;
+  float mPiInvMass = 0.14;
+  float mProtonInvMass = 0.938;
+  Int_t mInvMasses = 0; // switch for the V0 invariant mass computation, 1 (default) - on, 0 - off
 
   float mVertexXYsize = 0.5;
   float mVertexZsize = 15.;
@@ -103,18 +109,11 @@ class ITSTrackTask : public TaskInterface
   // mDoNorm: 0 = no normalization, 1 = normalization by nVertices, 2 = normalization by nRofs
   Int_t mDoNorm = 1;
   Int_t mNRofs = 0;
-  bool isNewCycle = true;
   int nBCbins = 103;
   long int mTimestamp = -1;
   int nVertices = 0;
   double mChipBins[2125]; // x bins for cos(lambda) plot
   double mCoslBins[25];   // y bins for cos(lambda) plot
-
-  TTree* tClusterMap;
-  //  Int_t mNtracksInROF;
-  std::vector<UInt_t> vMap;
-  std::vector<Float_t> vPhi;
-  std::vector<Float_t> vEta;
 
   o2::itsmft::TopologyDictionary* mDict;
 };

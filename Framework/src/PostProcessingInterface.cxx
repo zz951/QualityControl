@@ -29,14 +29,11 @@ void PostProcessingInterface::setID(const std::string& id)
   mID = id;
 }
 
-const std::string& PostProcessingInterface::getName() const { return mName; }
-
-void PostProcessingInterface::setName(const std::string& name)
+void PostProcessingInterface::configure(const boost::property_tree::ptree& config)
 {
-  mName = name;
 }
 
-void PostProcessingInterface::configure(const boost::property_tree::ptree& config)
+void PostProcessingInterface::configure()
 {
 }
 

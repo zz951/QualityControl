@@ -79,6 +79,9 @@ CellTask::~CellTask()
   cleanOptional(mCells_ev_DCAL_Thres);
   cleanOptional(mFracGoodCellsEvent);
   cleanOptional(mFracGoodCellsSM);
+  cleanOptional(mTotalEnergy);
+  cleanOptional(mTotalEnergyCorr);
+  cleanOptional(mTotalEnergySM);
 }
 
 void CellTask::initialize(o2::framework::InitContext& /*ctx*/)
@@ -113,6 +116,7 @@ void CellTask::initialize(o2::framework::InitContext& /*ctx*/)
   mTaskSettings.mHasTimeVsCellID = get_bool(getConfigValueLower("hasTimeVsCell")),
   mTaskSettings.mHasHistosCalib = get_bool(getConfigValueLower("hasHistCalib"));
   mTaskSettings.mCalibrateEnergy = get_bool(getConfigValue("calibrateEnergy"));
+  mTaskSettings.mIsHighMultiplicity = get_bool(getConfigValue("highMultiplicity"));
   if (hasConfigValue("thresholdTimePhys")) {
     mTaskSettings.mAmpThresholdTimePhys = get_double(getConfigValue("thresholdTimePhys"));
   }
@@ -125,11 +129,15 @@ void CellTask::initialize(o2::framework::InitContext& /*ctx*/)
   if (hasConfigValue("thresholdPHYS")) {
     mTaskSettings.mThresholdPHYS = get_double(getConfigValue("thresholdPHYS"));
   }
+  if (hasConfigValue("thresholdTotalEnergy")) {
+    mTaskSettings.mThresholdTotalEnergy = get_double(getConfigValue("thresholdTotalEnergy"));
+  }
   ILOG(Info, Support) << "Apply energy calibration: " << (mTaskSettings.mCalibrateEnergy ? "yes" : "no") << ENDM;
   ILOG(Info, Support) << "Amplitude cut time histograms (PhysTrigger) " << mTaskSettings.mAmpThresholdTimePhys << ENDM;
   ILOG(Info, Support) << "Amplitude cut time histograms (CalibTrigger) " << mTaskSettings.mAmpThresholdTimeCalib << ENDM;
   ILOG(Info, Support) << "Amplitude cut occupancy histograms (PhysTrigger) " << mTaskSettings.mThresholdPHYS << ENDM;
   ILOG(Info, Support) << "Amplitude cut occupancy histograms (CalibTrigger) " << mTaskSettings.mThresholdCAL << ENDM;
+  ILOG(Info, Support) << "Multiplicity mode: " << (mTaskSettings.mIsHighMultiplicity ? "High multiplicity" : "Low multiplicity") << ENDM;
 
   mIgnoreTriggerTypes = get_bool(getConfigValue("ignoreTriggers"));
 
@@ -142,6 +150,9 @@ void CellTask::initialize(o2::framework::InitContext& /*ctx*/)
   if (mTaskSettings.mHasHistosCalib) {
     ILOG(Debug, Support) << "Enabling calibrated histograms" << ENDM;
   }
+
+  parseMultiplicityRanges();
+  initDefaultMultiplicityRanges();
 
   // initialize geometry
   if (!mGeometry) {
@@ -197,98 +208,98 @@ void CellTask::initialize(o2::framework::InitContext& /*ctx*/)
   mCellsMaxSM->GetYaxis()->SetTitle("counts");
   getObjectsManager()->startPublishing(mCellsMaxSM);
 
-  mCells_ev_sm = new TH2D("ncellsPerEventSupermodule", "# of Cells per Events vs supermodule ID", 100, 0, 100, 20, -0.5, 19.5);
+  mCells_ev_sm = new TH2D("ncellsPerEventSupermodule", "# of Cells per Events vs supermodule ID", mTaskSettings.mMultiplicityRangeSM, 0, mTaskSettings.mMultiplicityRangeSM, 20, -0.5, 19.5);
   mCells_ev_sm->GetYaxis()->SetTitle("Supermodule");
   mCells_ev_sm->GetXaxis()->SetTitle("Cells/Event");
   mCells_ev_sm->SetStats(false);
   getObjectsManager()->startPublishing(mCells_ev_sm);
 
-  mCells_ev_smThr = new TH2D("ncellsPerEventSupermoduleWThr", "# of Cells per Events vs supermodule ID Threshold", 20, 0, 20, 20, -0.5, 19.5);
+  mCells_ev_smThr = new TH2D("ncellsPerEventSupermoduleWThr", "# of Cells per Events vs supermodule ID Threshold", mTaskSettings.mMultiplicityRangeSMThreshold, 0, mTaskSettings.mMultiplicityRangeSMThreshold, 20, -0.5, 19.5);
   mCells_ev_smThr->GetYaxis()->SetTitle("Supermodule");
   mCells_ev_smThr->GetXaxis()->SetTitle("Cells/Event");
   mCells_ev_smThr->SetStats(false);
   getObjectsManager()->startPublishing(mCells_ev_smThr);
 
-  mCells_ev = new TH1D("ncellsPerEventTot", "# of Cells per event", 1000, 0, 1000);
+  mCells_ev = new TH1D("ncellsPerEventTot", "# of Cells per event", mTaskSettings.mMultiplicityRange, 0, mTaskSettings.mMultiplicityRange);
   mCells_ev->GetXaxis()->SetTitle("Cells/Event");
   mCells_ev->GetYaxis()->SetTitle("Events");
   mCells_ev->SetStats(false);
   getObjectsManager()->startPublishing(mCells_ev);
 
-  mCells_ev_Thres = new TH1D("ncellPerEventTot_Thres", "# of Cells per event above threshold", 100, 0, 100);
+  mCells_ev_Thres = new TH1D("ncellPerEventTot_Thres", "# of Cells per event above threshold", mTaskSettings.mMultiplicityRangeThreshold, 0, mTaskSettings.mMultiplicityRangeThreshold);
   mCells_ev_Thres->SetStats(false);
   mCells_ev_Thres->GetXaxis()->SetTitle("Cells/Event");
   mCells_ev_Thres->GetYaxis()->SetTitle("Events");
   getObjectsManager()->startPublishing(mCells_ev_Thres);
 
-  mCells_ev_EMCAL = new TH1D("ncellsPerEventEMCALTot", "# of Cells per events in EMCAL", 300, 0, 300);
+  mCells_ev_EMCAL = new TH1D("ncellsPerEventEMCALTot", "# of Cells per events in EMCAL", mTaskSettings.mMultiplicityRangeDetector, 0, mTaskSettings.mMultiplicityRangeDetector);
   mCells_ev_EMCAL->GetXaxis()->SetTitle("Cells/Event");
   mCells_ev_EMCAL->GetYaxis()->SetTitle("Events");
   mCells_ev_EMCAL->SetStats(false);
   getObjectsManager()->startPublishing(mCells_ev_EMCAL);
 
-  mCells_ev_EMCAL_Thres = new TH1D("ncellPerEventEMCALTot_Thres", "# of Cells per event in EMCAL abvoe threshold", 100, 0, 100);
+  mCells_ev_EMCAL_Thres = new TH1D("ncellPerEventEMCALTot_Thres", "# of Cells per event in EMCAL above threshold", mTaskSettings.mMultiplicityRangeThreshold, 0, mTaskSettings.mMultiplicityRangeThreshold);
   mCells_ev_EMCAL_Thres->GetXaxis()->SetTitle("Cells/Event");
   mCells_ev_EMCAL_Thres->GetYaxis()->SetTitle("Events");
   mCells_ev_EMCAL_Thres->SetStats(false);
   getObjectsManager()->startPublishing(mCells_ev_EMCAL_Thres);
 
-  mCells_ev_DCAL = new TH1D("ncellsPerEventDCALTot", "# of Cells per event in DCAL", 300, 0, 300);
+  mCells_ev_DCAL = new TH1D("ncellsPerEventDCALTot", "# of Cells per event in DCAL", mTaskSettings.mMultiplicityRangeDetector, 0, mTaskSettings.mMultiplicityRangeDetector);
   mCells_ev_DCAL->GetXaxis()->SetTitle("Cells/Event");
   mCells_ev_DCAL->GetYaxis()->SetTitle("Events");
   mCells_ev_DCAL->SetStats(false);
   getObjectsManager()->startPublishing(mCells_ev_DCAL);
 
-  mCells_ev_DCAL_Thres = new TH1D("ncellPerEventDCALTot_Thres", "# of Cells per event in DCAL above threshold", 100, 0, 100);
+  mCells_ev_DCAL_Thres = new TH1D("ncellPerEventDCALTot_Thres", "# of Cells per event in DCAL above threshold", mTaskSettings.mMultiplicityRangeThreshold, 0, mTaskSettings.mMultiplicityRangeThreshold);
   mCells_ev_DCAL_Thres->GetXaxis()->SetTitle("Cells/Event");
   mCells_ev_DCAL_Thres->GetYaxis()->SetTitle("Events");
   mCells_ev_DCAL_Thres->SetStats(false);
   getObjectsManager()->startPublishing(mCells_ev_DCAL_Thres);
 
   if (mTaskSettings.mHasHistosCalib) {
-    mCells_ev_sm_good = new TH2D("ncellsGoodPerEventSupermodule", "# of good Cells per Events vs supermodule ID", 100, 0, 100, 20, -0.5, 19.5);
+    mCells_ev_sm_good = new TH2D("ncellsGoodPerEventSupermodule", "# of good Cells per Events vs supermodule ID", mTaskSettings.mMultiplicityRangeSM, 0, mTaskSettings.mMultiplicityRangeSM, 20, -0.5, 19.5);
     mCells_ev_sm_good->GetYaxis()->SetTitle("Supermodule");
     mCells_ev_sm_good->GetXaxis()->SetTitle("Good cells/Event");
     mCells_ev_sm_good->SetStats(false);
     getObjectsManager()->startPublishing(mCells_ev_sm_good);
 
-    mCells_ev_sm_bad = new TH2D("ncellsBadPerEventSupermodule", "# of bad Cells per Events vs supermodule ID", 100, 0, 100, 20, -0.5, 19.5);
+    mCells_ev_sm_bad = new TH2D("ncellsBadPerEventSupermodule", "# of bad Cells per Events vs supermodule ID", mTaskSettings.mMultiplicityRangeSM, 0, mTaskSettings.mMultiplicityRangeSM, 20, -0.5, 19.5);
     mCells_ev_sm_bad->GetYaxis()->SetTitle("Supermodule");
     mCells_ev_sm_bad->GetXaxis()->SetTitle("Bad cells/Event");
     mCells_ev_sm_bad->SetStats(false);
     getObjectsManager()->startPublishing(mCells_ev_sm_bad);
 
-    mCells_ev_good = new TH1D("ncellsGoodPerEventTot", "# good of Cells per event", 1000, 0, 1000);
+    mCells_ev_good = new TH1D("ncellsGoodPerEventTot", "# good of Cells per event", mTaskSettings.mMultiplicityRange, 0, mTaskSettings.mMultiplicityRange);
     mCells_ev_good->GetXaxis()->SetTitle("Good cells/Event");
     mCells_ev_good->GetYaxis()->SetTitle("Events");
     mCells_ev_good->SetStats(false);
     getObjectsManager()->startPublishing(mCells_ev_good);
 
-    mCells_ev_bad = new TH1D("ncellsBadPerEventTot", "# bad of Cells per event", 1000, 0, 1000);
+    mCells_ev_bad = new TH1D("ncellsBadPerEventTot", "# bad of Cells per event", mTaskSettings.mMultiplicityRange, 0, mTaskSettings.mMultiplicityRange);
     mCells_ev_bad->GetXaxis()->SetTitle("Bad cells/Event");
     mCells_ev_bad->GetYaxis()->SetTitle("Events");
     mCells_ev_bad->SetStats(false);
     getObjectsManager()->startPublishing(mCells_ev_bad);
 
-    mCells_ev_EMCAL_good = new TH1D("ncellsGoodPerEventEMCALTot", "# of good Cells per events in EMCAL", 300, 0, 300);
+    mCells_ev_EMCAL_good = new TH1D("ncellsGoodPerEventEMCALTot", "# of good Cells per events in EMCAL", mTaskSettings.mMultiplicityRangeDetector, 0, mTaskSettings.mMultiplicityRangeDetector);
     mCells_ev_EMCAL_good->GetXaxis()->SetTitle("Good cells/Event");
     mCells_ev_EMCAL_good->GetYaxis()->SetTitle("Events");
     mCells_ev_EMCAL_good->SetStats(false);
     getObjectsManager()->startPublishing(mCells_ev_EMCAL_good);
 
-    mCells_ev_EMCAL_bad = new TH1D("ncellsBadPerEventEMCALTot", "# of bad Cells per events in EMCAL", 300, 0, 300);
+    mCells_ev_EMCAL_bad = new TH1D("ncellsBadPerEventEMCALTot", "# of bad Cells per events in EMCAL", mTaskSettings.mMultiplicityRangeDetector, 0, mTaskSettings.mMultiplicityRangeDetector);
     mCells_ev_EMCAL_bad->GetXaxis()->SetTitle("Bad cells/Event");
     mCells_ev_EMCAL_bad->GetYaxis()->SetTitle("Events");
     mCells_ev_EMCAL_bad->SetStats(false);
     getObjectsManager()->startPublishing(mCells_ev_EMCAL_bad);
 
-    mCells_ev_DCAL_good = new TH1D("ncellsGoodPerEventDCALTot", "# of good Cells per event in DCAL", 300, 0, 300);
+    mCells_ev_DCAL_good = new TH1D("ncellsGoodPerEventDCALTot", "# of good Cells per event in DCAL", mTaskSettings.mMultiplicityRangeDetector, 0, mTaskSettings.mMultiplicityRangeDetector);
     mCells_ev_DCAL_good->GetXaxis()->SetTitle("Good cells/Event");
     mCells_ev_DCAL_good->GetYaxis()->SetTitle("Events");
     mCells_ev_DCAL_good->SetStats(false);
     getObjectsManager()->startPublishing(mCells_ev_DCAL_good);
 
-    mCells_ev_DCAL_bad = new TH1D("ncellsBaddPerEventDCALTot", "# of bad Cells per event in DCAL", 300, 0, 300);
+    mCells_ev_DCAL_bad = new TH1D("ncellsBaddPerEventDCALTot", "# of bad Cells per event in DCAL", mTaskSettings.mMultiplicityRangeDetector, 0, mTaskSettings.mMultiplicityRangeDetector);
     mCells_ev_DCAL_bad->GetXaxis()->SetTitle("Badd cells/Event");
     mCells_ev_DCAL_bad->GetYaxis()->SetTitle("Events");
     mCells_ev_DCAL_bad->SetStats(false);
@@ -308,6 +319,22 @@ void CellTask::initialize(o2::framework::InitContext& /*ctx*/)
     mFracGoodCellsSM->SetStats(false);
     getObjectsManager()->startPublishing(mFracGoodCellsSM);
   }
+
+  mTotalEnergy = new TH1D("totalEnergy", "Total energy / event", mTaskSettings.mTotalEnergyRange, 0., mTaskSettings.mTotalEnergyRange);
+  mTotalEnergy->GetXaxis()->SetTitle("E_{tot} (GeV)");
+  mTotalEnergy->GetYaxis()->SetTitle("Number of events");
+  mTotalEnergy->SetStats(false);
+  getObjectsManager()->startPublishing(mTotalEnergy);
+
+  mTotalEnergyCorr = new TH2D("totalEnergyCorr", "Total energy EMCAL vs. DCAL / event", mTaskSettings.mTotalEnergyRangeDetector, 0., mTaskSettings.mTotalEnergyRangeDetector, mTaskSettings.mTotalEnergyRangeDetector, 0., mTaskSettings.mTotalEnergyRangeDetector);
+  mTotalEnergyCorr->GetXaxis()->SetTitle("EMCAL E_{tot} (GeV)");
+  mTotalEnergyCorr->GetYaxis()->SetTitle("DCAL E_{tot} (GeV)");
+  getObjectsManager()->startPublishing(mTotalEnergyCorr);
+
+  mTotalEnergySM = new TH2D("totalEnergySupermodule", "Total energy in supermodule / event", mTaskSettings.mTotalEnergyRangeSM, 0., mTaskSettings.mTotalEnergyRangeSM, 20, -0.5, 19.5);
+  mTotalEnergySM->GetXaxis()->SetTitle("E_{tot} (GeV)");
+  mTotalEnergySM->GetYaxis()->SetTitle("SupermoduleID");
+  getObjectsManager()->startPublishing(mTotalEnergySM);
 }
 
 void CellTask::startOfActivity(const Activity& /*activity*/)
@@ -390,6 +417,7 @@ void CellTask::monitorData(o2::framework::ProcessingContext& ctx)
   std::array<int, 20> numCellsSM_Thres;
   std::array<int, 20> numCellsGood;
   std::array<int, 20> numCellsBad;
+  std::array<double, 20> totalEnergies;
   std::fill(numCellsSM.begin(), numCellsSM.end(), 0);
   std::fill(numCellsSM_Thres.begin(), numCellsSM_Thres.end(), 0);
   for (auto trg : combinedEvents) {
@@ -429,6 +457,7 @@ void CellTask::monitorData(o2::framework::ProcessingContext& ctx)
     std::fill(numCellsSM_Thres.begin(), numCellsSM_Thres.end(), 0);
     std::fill(numCellsGood.begin(), numCellsGood.end(), 0);
     std::fill(numCellsBad.begin(), numCellsBad.end(), 0);
+    std::fill(totalEnergies.begin(), totalEnergies.end(), 0.);
 
     // iterate over subevents
     for (auto& subev : trg.mSubevents) {
@@ -460,6 +489,13 @@ void CellTask::monitorData(o2::framework::ProcessingContext& ctx)
             }
             if (goodcell) {
               numCellsGood[sm]++;
+              auto cellenergy = cell.getAmplitude() * energycalib;
+              auto celltime = cell.getTimeStamp() - timeoffset;
+              if (cellenergy > mTaskSettings.mThresholdTotalEnergy) {
+                if (std::abs(celltime) < mTaskSettings.mMaxTimeTotalEnergy) {
+                  totalEnergies[sm] += cellenergy;
+                }
+              }
             } else {
               numCellsBad[sm]++;
             }
@@ -530,6 +566,19 @@ void CellTask::monitorData(o2::framework::ProcessingContext& ctx)
           mFracGoodCellsEvent->Fill(2., static_cast<double>(nGoodDCAL) / static_cast<double>(nGoodDCAL + nBadDCAL));
         }
       }
+
+      double totalEnergySum = 0., totalEnergyEMCAL = 0., totalEnergyDCAL = 0.;
+      for (std::size_t ism = 0; ism < 20; ism++) {
+        mTotalEnergySM->Fill(totalEnergies[ism], ism);
+        totalEnergySum += totalEnergies[ism];
+        if (ism < 12) {
+          totalEnergyEMCAL += totalEnergies[ism];
+        } else {
+          totalEnergyDCAL += totalEnergies[ism];
+        }
+      }
+      mTotalEnergy->Fill(totalEnergySum);
+      mTotalEnergyCorr->Fill(totalEnergyEMCAL, totalEnergyDCAL);
     }
 
     eventcounter++;
@@ -590,6 +639,68 @@ void CellTask::reset()
   resetOptional(mCells_ev_DCAL_Thres);
   resetOptional(mFracGoodCellsEvent);
   resetOptional(mFracGoodCellsSM);
+  resetOptional(mTotalEnergy);
+  resetOptional(mTotalEnergyCorr);
+  resetOptional(mTotalEnergySM);
+}
+
+void CellTask::initDefaultMultiplicityRanges()
+{
+  if (!mTaskSettings.mMultiplicityRange) {
+    mTaskSettings.mMultiplicityRange = mTaskSettings.mIsHighMultiplicity ? 10000 : 1000;
+  }
+  if (!mTaskSettings.mMultiplicityRangeDetector) {
+    mTaskSettings.mMultiplicityRangeDetector = mTaskSettings.mIsHighMultiplicity ? 4000 : 300;
+  }
+  if (!mTaskSettings.mMultiplicityRangeThreshold) {
+    mTaskSettings.mMultiplicityRangeThreshold = mTaskSettings.mIsHighMultiplicity ? 1000 : 100;
+  }
+  if (!mTaskSettings.mMultiplicityRangeSM) {
+    mTaskSettings.mMultiplicityRangeSM = mTaskSettings.mIsHighMultiplicity ? 1000 : 100;
+  }
+  if (!mTaskSettings.mMultiplicityRangeSMThreshold) {
+    mTaskSettings.mMultiplicityRangeSMThreshold = mTaskSettings.mIsHighMultiplicity ? 500 : 20;
+  }
+  if (std::abs(mTaskSettings.mTotalEnergyRange) < 1e-5) {
+    mTaskSettings.mTotalEnergyRange = mTaskSettings.mIsHighMultiplicity ? 4000 : 200;
+  }
+  if (std::abs(mTaskSettings.mTotalEnergyRangeDetector) < 1e-5) {
+    mTaskSettings.mTotalEnergyRangeDetector = mTaskSettings.mIsHighMultiplicity ? 4000 : 200;
+  }
+  if (std::abs(mTaskSettings.mTotalEnergyRangeSM) < 1e-5) {
+    mTaskSettings.mTotalEnergyRangeSM = mTaskSettings.mIsHighMultiplicity ? 500 : 50;
+  }
+}
+
+void CellTask::parseMultiplicityRanges()
+{
+  if (hasConfigValue("MultiplicityRange")) {
+    mTaskSettings.mMultiplicityRange = std::stoi(getConfigValue("MultiplicityRange"));
+  }
+  if (hasConfigValue("MultiplicityRangeDetector")) {
+    mTaskSettings.mMultiplicityRangeDetector = std::stoi(getConfigValue("MultiplicityRangeDetector"));
+  }
+  if (hasConfigValue("MultiplicityRangeThreshold")) {
+    mTaskSettings.mMultiplicityRangeThreshold = std::stoi(getConfigValue("MultiplicityRangeThreshold"));
+  }
+  if (hasConfigValue("MultiplicityRangeSM")) {
+    mTaskSettings.mMultiplicityRangeSM = std::stoi(getConfigValue("MultiplicityRangeSM"));
+  }
+  if (hasConfigValue("MultiplicityRangeSMThreshold")) {
+    mTaskSettings.mMultiplicityRangeSMThreshold = std::stoi(getConfigValue("MultiplicityRangeSMThreshold"));
+  }
+  if (hasConfigValue("TotalEnergyRange")) {
+    mTaskSettings.mTotalEnergyRange = std::stod(getConfigValue("TotalEnergyRange"));
+  }
+  if (hasConfigValue("TotalEnergyRangeDetector")) {
+    mTaskSettings.mTotalEnergyRangeDetector = std::stod(getConfigValue("TotalEnergyRangeDetector"));
+  }
+  if (hasConfigValue("TotalEnergyRangeSM")) {
+    mTaskSettings.mTotalEnergyRangeSM = std::stod(getConfigValue("TotalEnergyRangeSM"));
+  }
+  if (hasConfigValue("TotalEnergyMaxCellTime")) {
+    mTaskSettings.mMaxTimeTotalEnergy = std::stod(getConfigValue("TotalEnergyMaxCellTime"));
+  }
 }
 
 std::vector<CellTask::CombinedEvent> CellTask::buildCombinedEvents(const std::unordered_map<header::DataHeader::SubSpecificationType, gsl::span<const o2::emcal::TriggerRecord>>& triggerrecords) const

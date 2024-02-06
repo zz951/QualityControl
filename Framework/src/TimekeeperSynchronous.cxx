@@ -18,6 +18,7 @@
 #include "QualityControl/QcInfoLogger.h"
 
 #include <CommonConstants/LHCConstants.h>
+#include <Framework/TimingInfo.h>
 
 namespace o2::quality_control::core
 {
@@ -32,7 +33,7 @@ void TimekeeperSynchronous::updateByCurrentTimestamp(validity_time_t timestampMs
   mActivityDuration.update(timestampMs);
 }
 
-void TimekeeperSynchronous::updateByTimeFrameID(uint32_t tfid, uint64_t nOrbitsPerTF)
+void TimekeeperSynchronous::updateByTimeFrameID(uint32_t tfid)
 {
   if (tfid == 0) {
     if (!mWarnedAboutTfIdZero) {
@@ -56,6 +57,7 @@ void TimekeeperSynchronous::updateByTimeFrameID(uint32_t tfid, uint64_t nOrbitsP
   // fixme: We might want to use this once we know how to get orbitResetTime:
   //  std::ceil((timingInfo.firstTForbit * o2::constants::lhc::LHCOrbitNS / 1000 + orbitResetTime) / 1000);
   //  Until then, we use a less precise method:
+  constexpr uint64_t nOrbitsPerTF = 32; // naively assuming it's 32 for any new data. anyway, it is not crucial for sync QC
   auto tfDuration = constants::lhc::LHCOrbitNS / 1000000 * nOrbitsPerTF;
   auto tfStart = mActivityDuration.getMin() + tfDuration * (tfid - 1);
   auto tfEnd = tfStart + tfDuration - 1;
@@ -87,14 +89,19 @@ validity_time_t
   validity_time_t selected = 0;
   if (not_on_limit(ecsTimestamp)) {
     selected = ecsTimestamp;
-  } else if (not_on_limit(currentTimestamp)) {
-    selected = currentTimestamp;
-  } else {
+  } else if (not_on_limit(configTimestamp)) {
     selected = configTimestamp;
+  } else {
+    selected = currentTimestamp;
   }
   ILOG(Info, Devel) << "Received the following activity boundary propositions: " << ecsTimestamp
                     << ", " << configTimestamp << ", " << currentTimestamp << ". Selected: " << selected << ENDM;
   return selected;
+}
+
+bool TimekeeperSynchronous::shouldFinishCycle(const framework::TimingInfo& timingInfo)
+{
+  return timingInfo.isTimer();
 }
 
 } // namespace o2::quality_control::core

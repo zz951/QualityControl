@@ -18,15 +18,16 @@
 #define QC_MODULE_MCH_DIGITSCHECK_H
 
 #include "MCH/Helpers.h"
-#include "MUONCommon/MergeableTH2Ratio.h"
 #include "QualityControl/CheckInterface.h"
-#include "QualityControl/MonitorObject.h"
 #include "QualityControl/Quality.h"
-#include "MCHRawCommon/DataFormats.h"
 #include "MCHRawElecMap/Mapper.h"
 #include <string>
 
-using namespace o2::quality_control_modules::muon;
+namespace o2::quality_control::core
+{
+class MonitorObject;
+}
+
 namespace o2::quality_control_modules::muonchambers
 {
 

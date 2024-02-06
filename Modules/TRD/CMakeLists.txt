@@ -2,8 +2,8 @@
 
 add_library(O2QcTRD)
 
-target_sources(O2QcTRD PRIVATE src/TRDReductor.cxx src/PulsePositionCheck.cxx  src/TrackingTask.cxx  src/PulseHeightTrackMatch.cxx  src/TrackletsCheck.cxx  src/TrackletsTask.cxx  src/PulseHeightCheck.cxx  src/PulseHeight.cxx  src/RawData.cxx  src/DigitsTask.cxx
-                             src/DigitsCheck.cxx src/TRDTrending.cxx src/TrendingTaskConfigTRD.cxx src/PulseHeightPostProcessing.cxx)
+target_sources(O2QcTRD PRIVATE src/TrackletCountCheck.cxx  src/PulsePositionCheck.cxx  src/TrackingTask.cxx  src/PulseHeightTrackMatch.cxx  src/TrackletsCheck.cxx  src/TrackletsTask.cxx  src/PulseHeightCheck.cxx  src/RawData.cxx  src/DigitsTask.cxx
+                             src/TRDTrending.cxx src/TrendingTaskConfigTRD.cxx src/PulseHeightPostProcessing.cxx src/TRDHelpers.cxx)
 
 target_include_directories(
   O2QcTRD
@@ -11,7 +11,7 @@ target_include_directories(
          $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-target_link_libraries(O2QcTRD PUBLIC O2QualityControl)
+target_link_libraries(O2QcTRD PUBLIC O2QualityControl O2QcCommon)
 
 install(TARGETS O2QcTRD
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -20,18 +20,17 @@ install(TARGETS O2QcTRD
 
 add_root_dictionary(O2QcTRD
                     HEADERS
-  include/TRD/TRDReductor.h
+  include/TRD/TrackletCountCheck.h
   include/TRD/PulsePositionCheck.h
   include/TRD/TrackingTask.h
   include/TRD/PulseHeightTrackMatch.h
   include/TRD/TrackletsCheck.h
   include/TRD/TrackletsTask.h
+  include/TRD/TRDHelpers.h
   include/TRD/PulseHeightCheck.h
-  include/TRD/PulseHeight.h
   include/TRD/RawData.h
   include/TRD/PulseHeightPostProcessing.h
                             include/TRD/DigitsTask.h
-                            include/TRD/DigitsCheck.h
                             include/TRD/TRDTrending.h
                             include/TRD/TrendingTaskConfigTRD.h
                     LINKDEF include/TRD/LinkDef.h)
@@ -69,5 +68,5 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/TRD
 
 # ---- Install config files ----
 
-install(FILES DigitsTask.json
+install(FILES TRDQC.json
               DESTINATION etc)

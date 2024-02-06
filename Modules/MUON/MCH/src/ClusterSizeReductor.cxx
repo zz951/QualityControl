@@ -11,7 +11,8 @@
 
 ///
 /// \file   ClusterSizeReductor.cxx
-/// \author Piotr Konopka, Sebastien Perrin
+/// \author Andrea Ferrero
+/// \author Sebastien Perrin
 ///
 
 #include "MCH/ClusterSizeReductor.h"
@@ -21,7 +22,7 @@
 namespace o2::quality_control_modules::muonchambers
 {
 
-ClusterSizeReductor::ClusterSizeReductor() : quality_control::postprocessing::Reductor()
+ClusterSizeReductor::ClusterSizeReductor() : quality_control::postprocessing::ReductorTObject()
 {
 }
 

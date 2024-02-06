@@ -21,6 +21,7 @@
 // O2
 #include <Common/Exceptions.h>
 #include <Framework/DataSpecUtils.h>
+#include <Framework/ConfigParamRegistry.h>
 #include <Monitoring/MonitoringFactory.h>
 #include <Monitoring/Monitoring.h>
 #include <CommonUtils/ConfigurableParam.h>
@@ -35,6 +36,7 @@
 #include "QualityControl/RootClassFactory.h"
 #include "QualityControl/ConfigParamGlo.h"
 #include "QualityControl/Bookkeeping.h"
+#include "QualityControl/WorkflowType.h"
 
 #include <TSystem.h>
 
@@ -42,7 +44,6 @@ using namespace std::chrono;
 using namespace AliceO2::Common;
 using namespace AliceO2::InfoLogger;
 using namespace o2::framework;
-using namespace o2::configuration;
 using namespace o2::monitoring;
 using namespace o2::quality_control::core;
 using namespace o2::quality_control::repository;
@@ -183,7 +184,7 @@ void CheckRunner::refreshConfig(InitContext& iCtx)
       }
 
       // prepare the information we need
-      auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(updatedTree);
+      auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(updatedTree, workflow_type_helpers::getWorkflowType(iCtx.options()));
 
       // Use the config to reconfigure the check runner.
       // The configs for the checks we find in the config and in our map are updated.
@@ -211,7 +212,7 @@ void CheckRunner::refreshConfig(InitContext& iCtx)
 void CheckRunner::init(framework::InitContext& iCtx)
 {
   try {
-    initInfologger(iCtx);
+    core::initInfologger(iCtx, mConfig.infologgerDiscardParameters, createCheckRunnerFacility(mDeviceName));
     refreshConfig(iCtx);
     Bookkeeping::getInstance().init(mConfig.bookkeepingUrl);
     initDatabase();
@@ -255,9 +256,6 @@ void CheckRunner::run(framework::ProcessingContext& ctx)
 
   auto qualityObjects = check();
 
-  // we want all objects that we are going to store to have the same validFrom values.
-  // ideally it should be SOR or the moving window start, but before GUI allows for this,
-  // we have to put the current timestamp.
   auto now = getCurrentTimestamp();
   store(qualityObjects, now);
   store(mMonitorObjectStoreVector, now);
@@ -311,6 +309,7 @@ void CheckRunner::prepareCacheData(framework::InputRecord& inputRecord)
           ILOG(Debug, Devel) << "    Creating an ad hoc MO." << ENDM;
           header::DataOrigin origin = DataSpecUtils::asConcreteOrigin(input);
           mo = std::make_shared<MonitorObject>(tObject, input.binding, "CheckRunner", origin.str);
+          mo->setActivity(*mActivity);
         }
 
         if (mo) {
@@ -358,6 +357,7 @@ QualityObjectsType CheckRunner::check()
   QualityObjectsType allQOs;
   for (auto& [checkName, check] : mChecks) {
     if (updatePolicyManager.isReady(check.getName())) {
+      ILOG(Debug, Support) << "Monitor Objects for the check '" << checkName << "' are ready --> check()" << ENDM;
       auto newQOs = check.check(mMonitorObjects);
       mTotalNumberCheckExecuted += newQOs.size();
 
@@ -367,7 +367,7 @@ QualityObjectsType CheckRunner::check()
       // Was checked, update latest revision
       updatePolicyManager.updateActorRevision(checkName);
     } else {
-      ILOG(Info, Support) << "Monitor Objects for the check '" << checkName << "' are not ready, ignoring" << ENDM;
+      ILOG(Debug, Support) << "Monitor Objects for the check '" << checkName << "' are not ready, ignoring" << ENDM;
     }
   }
   return allQOs;
@@ -378,11 +378,13 @@ void CheckRunner::store(QualityObjectsType& qualityObjects, long validFrom)
   ILOG(Debug, Devel) << "Storing " << qualityObjects.size() << " QualityObjects" << ENDM;
   try {
     for (auto& qo : qualityObjects) {
-      qo->setActivity(*mActivity);
-      qo->getActivity().mValidity.set(validFrom, 0);
       mDatabase->storeQO(qo);
       mTotalNumberQOStored++;
       mNumberQOStored++;
+    }
+    if (!qualityObjects.empty()) {
+      auto& qo = qualityObjects.at(0);
+      ILOG(Info, Devel) << "Validity of QO '" << qo->GetName() << "' is (" << qo->getValidity().getMin() << ", " << qo->getValidity().getMax() << ")" << ENDM;
     }
   } catch (boost::exception& e) {
     ILOG(Info, Support) << "Unable to " << diagnostic_information(e) << ENDM;
@@ -394,11 +396,14 @@ void CheckRunner::store(std::vector<std::shared_ptr<MonitorObject>>& monitorObje
   ILOG(Debug, Devel) << "Storing " << monitorObjects.size() << " MonitorObjects" << ENDM;
   try {
     for (auto& mo : monitorObjects) {
-      mo->setActivity(*mActivity);
-      mo->getActivity().mValidity.set(validFrom, 0);
       mDatabase->storeMO(mo);
+
       mTotalNumberMOStored++;
       mNumberMOStored++;
+    }
+    if (!monitorObjects.empty()) {
+      auto& mo = monitorObjects.at(0);
+      ILOG(Info, Devel) << "Validity of MO '" << mo->GetName() << "' is (" << mo->getValidity().getMin() << ", " << mo->getValidity().getMax() << ")" << ENDM;
     }
   } catch (boost::exception& e) {
     ILOG(Info, Support) << "Unable to " << diagnostic_information(e) << ENDM;
@@ -416,7 +421,7 @@ void CheckRunner::send(QualityObjectsType& qualityObjects, framework::DataAlloca
     auto outputSpec = correspondingCheck.getOutputSpec();
     auto concreteOutput = framework::DataSpecUtils::asConcreteDataMatcher(outputSpec);
     allocator.snapshot(
-      framework::Output{ concreteOutput.origin, concreteOutput.description, concreteOutput.subSpec, outputSpec.lifetime }, *qo);
+      framework::Output{ concreteOutput.origin, concreteOutput.description, concreteOutput.subSpec }, *qo);
     mTotalQOSent++;
   }
 }
@@ -478,26 +483,6 @@ void CheckRunner::initServiceDiscovery()
   ILOG(Info, Support) << "ServiceDiscovery initialized" << ENDM;
 }
 
-void CheckRunner::initInfologger(framework::InitContext& iCtx)
-{
-  // TODO : the method should be merged with the other, similar, methods in *Runners
-
-  InfoLoggerContext* ilContext = nullptr;
-  AliceO2::InfoLogger::InfoLogger* il = nullptr;
-  try {
-    ilContext = &iCtx.services().get<AliceO2::InfoLogger::InfoLoggerContext>();
-    il = &iCtx.services().get<AliceO2::InfoLogger::InfoLogger>();
-  } catch (const RuntimeErrorRef& err) {
-    ILOG(Error) << "Could not find the DPL InfoLogger." << ENDM;
-  }
-
-  mConfig.infologgerDiscardParameters.discardFile = templateILDiscardFile(mConfig.infologgerDiscardParameters.discardFile, iCtx);
-  QcInfoLogger::init(createCheckRunnerFacility(mDeviceName),
-                     mConfig.infologgerDiscardParameters,
-                     il,
-                     ilContext);
-}
-
 void CheckRunner::initLibraries()
 {
   std::set<std::string> moduleNames;
@@ -525,12 +510,17 @@ void CheckRunner::start(ServiceRegistryRef services)
   mCollector->setRunNumber(mActivity->mId);
   mReceivedEOS = false;
   for (auto& [checkName, check] : mChecks) {
-    check.setActivity(mActivity);
+    check.startOfActivity(*mActivity);
   }
 
   // register ourselves to the BK
   if (gSystem->Getenv("O2_QC_REGISTER_IN_BK")) { // until we are sure it works, we have to turn it on
-    Bookkeeping::getInstance().registerProcess(mActivity->mId, mDeviceName, mDetectorName, bookkeeping::DPL_PROCESS_TYPE_QC_CHECKER, "");
+    ILOG(Debug, Devel) << "Registering checkRunner to BookKeeping" << ENDM;
+    try {
+      Bookkeeping::getInstance().registerProcess(mActivity->mId, mDeviceName, mDetectorName, bookkeeping::DPL_PROCESS_TYPE_QC_CHECKER, "");
+    } catch (std::runtime_error& error) {
+      ILOG(Warning, Devel) << "Failed registration to the BookKeeping: " << error.what() << ENDM;
+    }
   }
 }
 
@@ -540,15 +530,19 @@ void CheckRunner::stop()
   if (!mReceivedEOS) {
     ILOG(Warning, Devel) << "The STOP transition happened before an EndOfStream was received. The very last QC objects in this run might not have been stored." << ENDM;
   }
+  for (auto& [checkName, check] : mChecks) {
+    check.endOfActivity(*mActivity);
+  }
 }
 
 void CheckRunner::reset()
 {
-  ILOG(Info, Devel) << "Reset" << ENDM;
-
   try {
     mCollector.reset();
     mActivity = make_shared<Activity>();
+    for (auto& [checkName, check] : mChecks) {
+      check.reset();
+    }
   } catch (...) {
     // we catch here because we don't know where it will go in DPL's CallbackService
     ILOG(Error, Support) << "Error caught in reset() : "

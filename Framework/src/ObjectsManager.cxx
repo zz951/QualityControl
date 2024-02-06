@@ -23,6 +23,7 @@
 #include <TObjArray.h>
 
 #include <utility>
+#include <algorithm>
 
 using namespace o2::quality_control::core;
 using namespace AliceO2::Common;
@@ -41,6 +42,7 @@ ObjectsManager::ObjectsManager(std::string taskName, std::string taskClass, std:
   mMonitorObjects->SetOwner(true);
   mMonitorObjects->SetName(mTaskName.c_str());
   mMonitorObjects->setDetector(mDetectorName);
+  mMonitorObjects->setTaskName(mTaskName);
 
   // register with the discovery service
   if (!noDiscovery && !consulUrl.empty()) {
@@ -60,12 +62,13 @@ ObjectsManager::~ObjectsManager()
 void ObjectsManager::startPublishing(TObject* object)
 {
   if (mMonitorObjects->FindObject(object->GetName()) != nullptr) {
-    ILOG(Warning, Support) << "Object is already being published (" << object->GetName() << ")" << ENDM;
-    BOOST_THROW_EXCEPTION(DuplicateObjectError() << errinfo_object_name(object->GetName()));
+    ILOG(Warning, Support) << "Object is already being published (" << object->GetName() << "), will remove it and add the new one" << ENDM;
+    stopPublishing(object->GetName());
   }
   auto* newObject = new MonitorObject(object, mTaskName, mTaskClass, mDetectorName);
   newObject->setIsOwner(false);
   newObject->setActivity(mActivity);
+  newObject->setCreateMovingWindow(std::find(mMovingWindowsList.begin(), mMovingWindowsList.end(), object->GetName()) != mMovingWindowsList.end());
   mMonitorObjects->Add(newObject);
   mUpdateServiceDiscovery = true;
 }
@@ -221,6 +224,16 @@ void ObjectsManager::setActivity(const Activity& activity)
     auto* mo = dynamic_cast<MonitorObject*>(tobj);
     mo->setActivity(activity);
   }
+}
+
+void ObjectsManager::setMovingWindowsList(const vector<std::string>& movingWindows)
+{
+  mMovingWindowsList = movingWindows;
+}
+
+const std::vector<std::string>& ObjectsManager::getMovingWindowsList() const
+{
+  return mMovingWindowsList;
 }
 
 } // namespace o2::quality_control::core

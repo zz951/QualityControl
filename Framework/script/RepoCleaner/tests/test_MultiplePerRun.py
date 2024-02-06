@@ -21,7 +21,7 @@ class TestProduction(unittest.TestCase):
     one_minute = 60000
 
     def setUp(self):
-        self.ccdb = Ccdb('http://ccdb-test.cern.ch:8080')
+        self.ccdb = Ccdb('http://137.138.47.222:8080')
         self.extra = {"interval_between_versions": "90", "migrate_to_EOS": False}
         self.path = "qc/TST/MO/repo/test"
 
@@ -77,7 +77,8 @@ class TestProduction(unittest.TestCase):
 
         # Prepare data
         test_path = self.path + "/test_5_runs"
-        self.prepare_data(test_path, [3, 3, 3, 3, 3], [60, 120, 190, 240, 24*60], 123)
+        self.prepare_data(test_path, [1*60, 2*60, 3*60+10, 4*60, 5*60],
+                          [60, 120, 190, 240, 24*60], 123)
 
         stats = multiple_per_run.process(self.ccdb, test_path, delay=60*24, from_timestamp=1,
                                        to_timestamp=self.in_ten_years, extra_params=self.extra)

@@ -18,14 +18,13 @@
 #include "QualityControl/MonitorObject.h"
 #include "QualityControl/QcInfoLogger.h"
 #include "QualityControl/Reductor.h"
+#include "QualityControl/ReductorTObject.h"
 #include "QualityControl/ObjectMetadataKeys.h"
 #include "ITS/TH2XlineReductor.h"
 #include <TCanvas.h>
 #include <TMultiGraph.h>
 #include <TH1.h>
 #include <TDatime.h>
-#include <map>
-#include <string>
 
 using namespace o2::quality_control;
 using namespace o2::quality_control::core;
@@ -112,13 +111,15 @@ void TrendingTaskITSCluster::trendValues(const Trigger& t, repository::DatabaseI
         runlist.push_back(std::to_string(mMetaData.runNumber));
       }
       TObject* obj = mo ? mo->getObject() : nullptr;
-      if (obj) {
-        mReductors[dataSource.name]->update(obj);
+      auto reductor = dynamic_cast<ReductorTObject*>(mReductors[dataSource.name].get());
+      if (obj && reductor) {
+        reductor->update(obj);
       }
     } else if (dataSource.type == "repository-quality") {
       auto qo = qcdb.retrieveQO(dataSource.path + "/" + dataSource.name);
-      if (qo) {
-        mReductors[dataSource.name]->update(qo.get());
+      auto reductor = dynamic_cast<ReductorTObject*>(mReductors[dataSource.name].get());
+      if (qo && reductor) {
+        reductor->update(qo.get());
       }
     } else {
       ILOGE << "Unknown type of data source '" << dataSource.type << "'.";
@@ -190,7 +191,8 @@ void TrendingTaskITSCluster::storePlots(repository::DatabaseInterface& qcdb)
 
     int npoints = runlist.size();
     TH1F* hfake = new TH1F("hfake", "hfake", npoints, 0.5, (double)npoints + 0.5);
-    SetGraphNameAndAxes(hfake, "hfake", vAverageObjectTitle[index].Data(), vAverageCanvasRunType[index] == 1 ? "run" : "time", vAverageObjectYTitle[index].Data(), min, max, runlist);
+
+    SetGraphNameAndAxes(hfake, "hfake", vAverageObjectTitle[index].Data(), vAverageCanvasRunType[index] == 1 ? "run" : "time", vAverageObjectYTitle[index].Data(), gTrends_avg[index]->GetYaxis()->GetXmin(), gTrends_avg[index]->GetYaxis()->GetXmax(), runlist);
     hfake->SetStats(kFALSE);
 
     hfake->Draw();
@@ -292,12 +294,19 @@ void TrendingTaskITSCluster::storePlots(repository::DatabaseInterface& qcdb)
 
         int npoints = (int)runlist.size();
         TH1F* hfake = new TH1F("hfake", "hfake", npoints, 0.5, (double)npoints + 0.5);
+        float max, min;
+        max = gTrends_layer[ilay * NTRENDSCLUSTER + id]->GetYaxis()->GetXmax();
+
+        if (id == 2)
+          min = -0.5;
+        else
+          min = gTrends_layer[ilay * NTRENDSCLUSTER + id]->GetYaxis()->GetXmin();
         SetGraphNameAndAxes(hfake, "hfake",
                             Form("L%d - %s trends", ilay, trendtitles[id].c_str()),
-                            isrun ? "run" : "time", ytitles[id], ymin[id], ymax[id], runlist);
-
+                            isrun ? "run" : "time", ytitles[id], min, max, runlist);
         hfake->SetStats(kFALSE);
         hfake->Draw();
+
         gTrends_layer[ilay * NTRENDSCLUSTER + id]->Draw();
         legstaves[ilay]->Draw("same");
 
@@ -307,6 +316,7 @@ void TrendingTaskITSCluster::storePlots(repository::DatabaseInterface& qcdb)
                                                   mConfig.detectorName, mMetaData.runNumber);
         mo->setIsOwner(false);
         qcdb.storeMO(mo);
+
         delete c[ilay * NTRENDSCLUSTER + id];
         delete gTrends_layer[ilay * NTRENDSCLUSTER + id];
         delete hfake;

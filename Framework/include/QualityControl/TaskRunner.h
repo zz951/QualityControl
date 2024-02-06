@@ -23,7 +23,9 @@
 #include <Framework/Task.h>
 #include <Framework/DataProcessorSpec.h>
 #include <Framework/CompletionPolicy.h>
+#include <Framework/DataTakingContext.h>
 #include <Headers/DataHeader.h>
+#include <Framework/ServiceRegistryRef.h>
 // QC
 #include "QualityControl/TaskRunnerConfig.h"
 
@@ -92,7 +94,7 @@ class TaskRunner : public framework::Task
   void finaliseCCDB(framework::ConcreteDataMatcher& matcher, void* obj) override;
 
   /// \brief TaskRunner's completion policy callback
-  static framework::CompletionPolicy::CompletionOp completionPolicyCallback(o2::framework::InputSpan const& inputs);
+  static framework::CompletionPolicy::CompletionOp completionPolicyCallback(o2::framework::InputSpan const& inputs, std::vector<framework::InputSpec> const&, framework::ServiceRegistryRef&);
 
   std::string getDeviceName() const { return mTaskConfig.deviceName; };
   const framework::Inputs& getInputsSpecs() const { return mTaskConfig.inputSpecs; };
@@ -104,7 +106,7 @@ class TaskRunner : public framework::Task
   /// \brief ID string for all TaskRunner devices
   static std::string createTaskRunnerIdString();
   /// \brief Unified DataOrigin for Quality Control tasks
-  static header::DataOrigin createTaskDataOrigin(const std::string& detectorCode);
+  static header::DataOrigin createTaskDataOrigin(const std::string& detectorCode, bool movingWindows = false);
   /// \brief Unified DataDescription naming scheme for all tasks
   static header::DataDescription createTaskDataDescription(const std::string& taskName);
   /// \brief Unified DataDescription naming scheme for all timers
@@ -121,9 +123,9 @@ class TaskRunner : public framework::Task
   /// \brief Callback for CallbackService::Id::Reset (DPL) a.k.a. RESET DEVICE transition (FairMQ)
   void reset();
 
-  static std::tuple<bool /*data ready*/, bool /*timer ready*/> validateInputs(const framework::InputRecord&);
+  /// \brief Checks if all the expected data inputs are present in the provided InputRecord
+  static bool isDataReady(const framework::InputRecord& inputs);
   void refreshConfig(framework::InitContext& iCtx);
-  void initInfologger(framework::InitContext& iCtx);
   void printTaskConfig() const;
   void startOfActivity();
   void endOfActivity();
@@ -142,10 +144,12 @@ class TaskRunner : public framework::Task
   Activity mActivity;
 
   void updateMonitoringStats(framework::ProcessingContext& pCtx);
+  void registerToBookkeeping();
 
   bool mCycleOn = false;
   bool mNoMoreCycles = false;
   int mCycleNumber = 0;
+  framework::DeploymentMode mDeploymentMode = framework::DeploymentMode::Local;
 
   // stats
   int mNumberMessagesReceivedInCycle = 0;

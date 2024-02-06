@@ -19,6 +19,7 @@
 
 #include "QualityControl/TaskInterface.h"
 #include <array>
+#include <climits>
 #include <unordered_map>
 #include <string_view>
 #include <gsl/span>
@@ -65,11 +66,23 @@ class CellTask final : public TaskInterface
     bool mHasTimeVsCellID;
     bool mHasHistosCalib;
     bool mCalibrateEnergy;
+    bool mIsHighMultiplicity;
 
     double mAmpThresholdTimePhys = 0.15;
     double mAmpThresholdTimeCalib = 0.3;
     double mThresholdPHYS = 0.2;
     double mThresholdCAL = 0.5;
+    double mThresholdTotalEnergy = 0.;
+
+    int mMultiplicityRange = 0;
+    int mMultiplicityRangeDetector = 0;
+    int mMultiplicityRangeThreshold = 0;
+    int mMultiplicityRangeSM = 0;
+    int mMultiplicityRangeSMThreshold = 0;
+    double mTotalEnergyRange = 0.;
+    double mTotalEnergyRangeDetector = 0.;
+    double mTotalEnergyRangeSM = 0.;
+    double mMaxTimeTotalEnergy = DBL_MAX;
   };
   struct CellHistograms {
     o2::emcal::Geometry* mGeometry;
@@ -169,6 +182,9 @@ class CellTask final : public TaskInterface
       return mSubevents.size();
     };
   };
+  void parseMultiplicityRanges();
+  void initDefaultMultiplicityRanges();
+
   std::vector<CombinedEvent> buildCombinedEvents(const std::unordered_map<header::DataHeader::SubSpecificationType, gsl::span<const o2::emcal::TriggerRecord>>& triggerrecords) const;
   TaskSettings mTaskSettings;                                ///< Settings of the task steered via task parameters
   Bool_t mIgnoreTriggerTypes = false;                        ///< Do not differenciate between trigger types, treat all triggers as phys. triggers
@@ -206,6 +222,9 @@ class CellTask final : public TaskInterface
   TH1* mCells_ev_DCAL_bad = nullptr;    ///< Number of Cells per events for DCAL
   TH2* mFracGoodCellsEvent = nullptr;   ///< Fraction of good cells / event (all / EMCAL / DCAL)
   TH2* mFracGoodCellsSM = nullptr;      ///< Fraction of good cells / supermodule
+  TH1* mTotalEnergy = nullptr;          ///< Total energy / event
+  TH2* mTotalEnergyCorr = nullptr;      ///< Total energy correlation EMCAL - DCAL
+  TH2* mTotalEnergySM = nullptr;        ///< Total energy per supermodule / event
 };
 
 } // namespace emcal

@@ -30,6 +30,8 @@
 #include "QualityControl/QcInfoLogger.h"
 #include "QualityControl/Quality.h"
 
+#include <QualityControl/AggregatorRunner.h>
+
 using namespace AliceO2::Common;
 using namespace AliceO2::InfoLogger;
 
@@ -63,6 +65,7 @@ void Check::init()
     mCheckInterface = root_class_factory::create<CheckInterface>(mCheckConfig.moduleName, mCheckConfig.className);
     mCheckInterface->setName(mCheckConfig.name);
     mCheckInterface->setCustomParameters(mCheckConfig.customParameters);
+    mCheckInterface->setCcdbUrl(mCheckConfig.conditionUrl);
   } catch (...) {
     std::string diagnostic = boost::current_exception_diagnostic_information();
     ILOG(Fatal, Ops) << "Unexpected exception, diagnostic information follows: "
@@ -82,6 +85,11 @@ void Check::init()
     ILOG(Info, Devel) << " / " << moname;
   }
   ILOG(Info, Devel) << ENDM;
+}
+
+void Check::reset()
+{
+  mCheckInterface->reset();
 }
 
 QualityObjectsType Check::check(std::map<std::string, std::shared_ptr<MonitorObject>>& moMap)
@@ -202,14 +210,14 @@ bool Check::getAllObjectsOption() const
   return mCheckConfig.allObjects;
 }
 
-CheckConfig Check::extractConfig(const CommonSpec&, const CheckSpec& checkSpec)
+CheckConfig Check::extractConfig(const CommonSpec& commonSpec, const CheckSpec& checkSpec)
 {
   framework::Inputs inputs;
   std::vector<std::string> objectNames;
   UpdatePolicyType updatePolicy = checkSpec.updatePolicy;
   bool checkAllObjects = false;
   for (const auto& dataSource : checkSpec.dataSources) {
-    if (!dataSource.isOneOf(DataSourceType::Task, DataSourceType::ExternalTask, DataSourceType::PostProcessingTask)) {
+    if (!dataSource.isOneOf(DataSourceType::Task, DataSourceType::TaskMovingWindow, DataSourceType::ExternalTask, DataSourceType::PostProcessingTask)) {
       throw std::runtime_error(
         "Unsupported dataSource '" + dataSource.name + "' for a Check '" + checkSpec.checkName + "'");
     }
@@ -252,7 +260,8 @@ CheckConfig Check::extractConfig(const CommonSpec&, const CheckSpec& checkSpec)
     checkAllObjects,
     allowBeautify,
     std::move(inputs),
-    createOutputSpec(checkSpec.checkName)
+    createOutputSpec(checkSpec.checkName),
+    commonSpec.conditionDBUrl
   };
 }
 
@@ -261,12 +270,21 @@ framework::OutputSpec Check::createOutputSpec(const std::string& checkName)
   return { "QC", createCheckDataDescription(checkName), 0, framework::Lifetime::Sporadic };
 }
 
-void Check::setActivity(std::shared_ptr<core::Activity> activity)
+void Check::startOfActivity(const core::Activity& activity)
 {
   if (mCheckInterface) {
-    mCheckInterface->setActivity(std::move(activity));
+    mCheckInterface->startOfActivity(activity);
   } else {
-    throw std::runtime_error("Trying to set Activity on an empty CheckInterface '" + mCheckConfig.name + "'");
+    throw std::runtime_error("Trying to start an Activity on an empty CheckInterface '" + mCheckConfig.name + "'");
+  }
+}
+
+void Check::endOfActivity(const core::Activity& activity)
+{
+  if (mCheckInterface) {
+    mCheckInterface->endOfActivity(activity);
+  } else {
+    throw std::runtime_error("Trying to stop an Activity on an empty CheckInterface '" + mCheckConfig.name + "'");
   }
 }
 

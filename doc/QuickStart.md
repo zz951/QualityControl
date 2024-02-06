@@ -10,7 +10,7 @@
       * [Environment loading](#environment-loading)
    * [Execution](#execution)
       * [Basic workflow](#basic-workflow)
-      * [Readout chain](#readout-chain)
+      * [Readout chain (optional)](#readout-chain-\(optional\))
          * [Getting real data from readout](#getting-real-data-from-readout)
          * [Readout data format as received by the Task](#readout-data-format-as-received-by-the-task)
       * [Post-processing example](#post-processing-example)
@@ -40,21 +40,19 @@ A CS8 machine (Mac, and in particular Ubuntu, are only supported on a best effor
 2. Prepare the QualityControl development package
     * `aliBuild init QualityControl@master --defaults o2`
 
-4. Build/install the QualityControl and the readout. The simplest is to use the metapackage `O2Suite`.
-    * `aliBuild build O2Suite --defaults o2`
-    * At this point you might encounter a message about missing system requirements. Run `aliDoctor --defaults o2 O2Suite` to get a full information about what is missing and how to install it.
+4. Build/install the QualityControl.
+    * `aliBuild build QualityControl --defaults o2`
+    * At this point you might encounter a message about missing system requirements. Run `aliDoctor --defaults o2 QualityControl` to get a full information about what is missing and how to install it.
 
-Note: you can also use the alibuild "defaults" called `o2-dataflow` to avoid building simulation related packages. Moreover, you can build `QualityControl` instead of `O2Suite` if you don't plan to use the readout (remember to substitute `O2Suite` with `QualityControl` when loading the environment).
+Note: you can also use the alibuild "defaults" called `o2-dataflow` to avoid building simulation related packages. If you plan to use `Readout`, you can build both with one `aliBuild` command by listing them one after another, space-separated.
 
 ### Environment loading
 
-Whenever you want to work with O2 and QualityControl, do either `alienv enter O2Suite/latest` or `alienv load O2Suite/latest`. 
-
-You can also load a package instead of the whole O2Suite, i.e. `alienv enter QualityControl/latest` or `alienv enter qcg/latest`. 
+Whenever you want to work with O2 and QualityControl, do `alienv enter QualityControl/latest`. To load multiple independent packages, list them one after the other, space-separated (e.g. `alienv enter QualityControl/latest Readout/latest`). O2 is automatically pulled by QualityControl, thus no need to specify it explicitely.
 
 ## Execution
 
-To make sure that your system is correctly setup, we are going to run a basic QC workflow attached to a simple data producer. We will use central services for the repository and the GUI. If you want to set them up on your computer or in your lab, please have a look [here](#local-ccdb-setup) and [here](#local-qcg-setup).
+To make sure that your system is correctly setup, we are going to run a basic QC workflow attached to a simple data producer. We will use central services for the repository and the GUI. If you want to set them up on your computer or in your lab, please have a look [here](Advanced.md#local-ccdb-setup) and [here](Advanced.md#local-qcg-qc-gui-setup).
 
 ### Basic workflow
 
@@ -99,7 +97,7 @@ __Configuration file__
 
 In the example above, the devices are configured in the config file named `basic.json`. It is installed in `$QUALITYCONTROL_ROOT/etc`. Each time you rebuild the code, `$QUALITYCONTROL_ROOT/etc/basic.json` is overwritten by the file in the source directory (`~/alice/QualityControl/Framework/basic.json`).
 
-The configuration for the QC is made of many parameters described in an [advanced section of the documentation](https://github.com/AliceO2Group/QualityControl/blob/master/doc/Advanced.md#configuration-files-details). For now we can just see below the definition of a task. `moduleName` and `className` specify respectively the library and the class to load and instantiate to do the actual job of the task. 
+The configuration for the QC is made of many parameters described in an [advanced section of the documentation](Advanced.md#configuration-files-details). For now we can just see below the definition of a task. `moduleName` and `className` specify respectively the library and the class to load and instantiate to do the actual job of the task. 
 ```json
 (...)
 "tasks": {
@@ -112,9 +110,10 @@ The configuration for the QC is made of many parameters described in an [advance
 ```
 Try and change the name of the task by replacing `QcTask` by a name of your choice (there are 2 places to update in the config file!). Relaunch the workflows. You should now see the object published under a different directory in the QCG.
 
-### Readout chain
+### Readout chain (optional)
 
 In this second example, we are going to use the Readout as our data source.
+This example assumes that Readout has been compiled beforehand (`aliBuild build Readout --defaults o2`).
 
 ![alt text](images/readout-schema.png)
 
@@ -154,7 +153,7 @@ The data sampling is configured to sample 1% of the data as the readout should r
 
 #### Getting real data from readout
 
-See [these instructions for readout](doc/ModulesDevelopment.md#readout) and [these for O2 utilities](doc/ModulesDevelopment.md#dpl-workflow).
+See [these instructions for readout](ModulesDevelopment.md#readout) and [these for O2 utilities](ModulesDevelopment.md#dpl-workflow).
 
 #### Readout data format as received by the Task
 
@@ -185,7 +184,7 @@ o2-qc-run-basic
 In another terminal window run the ExampleTrend post-processing task, as follows:
 
 ```
-o2-qc-run-postprocessing --config json://${QUALITYCONTROL_ROOT}/etc/postprocessing.json --name ExampleTrend
+o2-qc-run-postprocessing --config json://${QUALITYCONTROL_ROOT}/etc/postprocessing.json --id ExampleTrend
 ```
 
 On the [QCG website](https://qcg-test.cern.ch/?page=objectTree) you will see a TTree and additional plots visible under the path `/qc/TST/MO/ExampleTrend`. They show how different properties of the Example histogram change during time. The longer the applications are running, the more data will be visible.

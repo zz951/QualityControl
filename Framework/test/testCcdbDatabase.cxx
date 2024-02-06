@@ -15,7 +15,6 @@
 /// \author Barthelemy von Haller
 ///
 
-#include <unordered_map>
 #include "QualityControl/CcdbDatabase.h"
 #include "QualityControl/QcInfoLogger.h"
 #include "QualityControl/Version.h"
@@ -27,8 +26,8 @@
 #include <boost/test/unit_test.hpp>
 #include <TH1F.h>
 #include "QualityControl/RepoPathUtils.h"
-#include "QualityControl/testUtils.h"
 #include "QualityControl/ObjectMetadataKeys.h"
+#include "QualityControl/ActivityHelpers.h"
 #include <DataFormatsQualityControl/TimeRangeFlagCollection.h>
 #include <TROOT.h>
 #include <CCDB/CcdbApi.h>
@@ -196,6 +195,10 @@ BOOST_AUTO_TEST_CASE(ccdb_retrieve_timestamps, *utf::depends_on("ccdb_store"))
   std::shared_ptr<QualityObject> qo = f.backend->retrieveQO(f.getQoPath("short", "", false), 15000);
   BOOST_REQUIRE_NE(qo, nullptr);
   BOOST_CHECK_EQUAL(qo->getName(), f.taskName + "/short");
+
+  auto qoValidity = f.backend->getLatestObjectValidity(f.getQoPath("short", "qc", true), {});
+  ValidityInterval expectedValidity{ 10000, 20000 };
+  BOOST_CHECK(qoValidity == expectedValidity);
 }
 
 BOOST_AUTO_TEST_CASE(ccdb_retrieve_inexisting_mo)
@@ -383,6 +386,34 @@ BOOST_AUTO_TEST_CASE(ccdb_store_retrieve_any)
   BOOST_CHECK(h1_back != nullptr);
   BOOST_CHECK(h1_back->GetNbinsX() == 100);
   BOOST_CHECK(h1_back->GetEntries() > 0);
+}
+
+BOOST_AUTO_TEST_CASE(ccdb_store_retrieve_latest)
+{
+  test_fixture f;
+
+  TH1F* h1 = new TH1F("latest_test", "latest_test", 100, 0, 99);
+  h1->FillRandom("gaus", 10000);
+  shared_ptr<MonitorObject> mo1 = make_shared<MonitorObject>(h1, f.taskName, "TestClass", "TST");
+  mo1->updateActivity(1234, "LHC66", "passName1", "qc");
+  mo1->setValidity({ 30, 50 });
+  f.backend->storeMO(mo1);
+
+  h1->FillRandom("gaus", 10000);
+  mo1->updateActivity(1234, "LHC66", "passName1", "qc");
+  mo1->setValidity({ 10, 30 });
+  f.backend->storeMO(mo1); // this is going to be the latest version matching the provided Activity
+
+  h1->FillRandom("gaus", 10000);
+  mo1->updateActivity(1234, "LHC66", "differentPassName", "qc");
+  mo1->setValidity({ 10, 30 });
+  f.backend->storeMO(mo1);
+
+  std::shared_ptr<MonitorObject> moBack = f.backend->retrieveMO(f.getMoFolder("latest_test"), "latest_test", DatabaseInterface::Timestamp::Latest, { 1234, 0, "LHC66", "passName1", "qc" });
+  BOOST_REQUIRE(moBack != nullptr);
+  auto h1Back = dynamic_cast<TH1F*>(moBack->getObject());
+  BOOST_REQUIRE(h1Back != nullptr);
+  BOOST_CHECK_EQUAL(h1Back->GetEntries(), 20000);
 }
 
 BOOST_AUTO_TEST_CASE(ccdb_trfc)

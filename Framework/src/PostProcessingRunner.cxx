@@ -26,10 +26,10 @@
 #include "QualityControl/ConfigParamGlo.h"
 #include "QualityControl/MonitorObjectCollection.h"
 #include "QualityControl/Bookkeeping.h"
+#include "QualityControl/ActivityHelpers.h"
 
 #include <utility>
 #include <Framework/DataAllocator.h>
-#include <Framework/DataTakingContext.h>
 #include <CommonUtils/ConfigurableParam.h>
 #include <TSystem.h>
 
@@ -51,9 +51,9 @@ void PostProcessingRunner::setPublicationCallback(MOCPublicationCallback callbac
   mPublicationCallback = std::move(callback);
 }
 
-void PostProcessingRunner::init(const boost::property_tree::ptree& config)
+void PostProcessingRunner::init(const boost::property_tree::ptree& config, core::WorkflowType workflowType)
 {
-  auto specs = InfrastructureSpecReader::readInfrastructureSpec(config);
+  auto specs = InfrastructureSpecReader::readInfrastructureSpec(config, workflowType);
   auto ppTaskSpec = std::find_if(specs.postProcessingTasks.begin(),
                                  specs.postProcessingTasks.end(),
                                  [id = mID](const auto& spec) {
@@ -70,6 +70,8 @@ void PostProcessingRunner::init(const PostProcessingRunnerConfig& runnerConfig, 
 {
   mRunnerConfig = runnerConfig;
   mTaskConfig = taskConfig;
+  mActivity = taskConfig.activity;
+  mActivity.mValidity = gInvalidValidityInterval;
 
   QcInfoLogger::init("post/" + mID, mRunnerConfig.infologgerDiscardParameters);
   ILOG(Info, Support) << "Initializing PostProcessingRunner" << ENDM;
@@ -86,7 +88,7 @@ void PostProcessingRunner::init(const PostProcessingRunnerConfig& runnerConfig, 
                       << " Host : " << mRunnerConfig.database.at("host") << ENDM;
 
   mObjectManager = std::make_shared<ObjectsManager>(mTaskConfig.taskName, mTaskConfig.className, mTaskConfig.detectorName, mRunnerConfig.consulUrl);
-  mObjectManager->setActivity(mTaskConfig.activity);
+  mObjectManager->setActivity(mActivity);
   mServices.registerService<DatabaseInterface>(mDatabase.get());
   if (mPublicationCallback == nullptr) {
     mPublicationCallback = publishToRepository(*mDatabase);
@@ -97,13 +99,15 @@ void PostProcessingRunner::init(const PostProcessingRunnerConfig& runnerConfig, 
   ILOG(Debug, Devel) << "Creating a user task '" << mTaskConfig.taskName << "'" << ENDM;
   PostProcessingFactory f;
   mTask.reset(f.create(mTaskConfig));
-  mTask->setObjectsManager(mObjectManager);
   if (mTask) {
     ILOG(Debug, Devel) << "The user task '" << mTaskConfig.taskName << "' has been successfully created" << ENDM;
 
     mTaskState = TaskState::Created;
+    mTask->setObjectsManager(mObjectManager);
     mTask->setID(mTaskConfig.id);
     mTask->setName(mTaskConfig.taskName);
+    mTask->setCustomParameters(mTaskConfig.customParameters);
+    mTask->setCcdbUrl(mTaskConfig.ccdbUrl);
     mTask->configure(mRunnerConfig.configTree);
   } else {
     throw std::runtime_error("Failed to create the task '" + mTaskConfig.taskName + "' (det " + mTaskConfig.detectorName + ")");
@@ -126,7 +130,7 @@ bool PostProcessingRunner::run()
       return true;
     }
     if (mUpdateTriggers.empty()) {
-      doFinalize({ TriggerType::UserOrControl, true, mTaskConfig.activity });
+      doFinalize({ TriggerType::UserOrControl, true, mActivity });
       return false;
     } else if (Trigger trigger = trigger_helpers::tryTrigger(mStopTriggers)) {
       doFinalize(trigger);
@@ -168,11 +172,19 @@ void PostProcessingRunner::start(framework::ServiceRegistryRef dplServices)
     mTaskConfig.activity = computeActivity(dplServices, mTaskConfig.activity);
     QcInfoLogger::setPartition(mTaskConfig.activity.mPartitionName);
   }
+  mActivity = mTaskConfig.activity;
+  mActivity.mValidity = gInvalidValidityInterval;
   QcInfoLogger::setRun(mTaskConfig.activity.mId);
+  mObjectManager->setActivity(mActivity);
 
   // register ourselves to the BK
   if (gSystem->Getenv("O2_QC_REGISTER_IN_BK")) { // until we are sure it works, we have to turn it on
-    Bookkeeping::getInstance().registerProcess(mTaskConfig.activity.mId, mRunnerConfig.taskName, mRunnerConfig.detectorName, bookkeeping::DPL_PROCESS_TYPE_QC_POSTPROCESSING, "");
+    ILOG(Debug, Devel) << "Registering pp task to BookKeeping" << ENDM;
+    try {
+      Bookkeeping::getInstance().registerProcess(mTaskConfig.activity.mId, mRunnerConfig.taskName, mRunnerConfig.detectorName, bookkeeping::DPL_PROCESS_TYPE_QC_POSTPROCESSING, "");
+    } catch (std::runtime_error& error) {
+      ILOG(Warning, Devel) << "Failed registration to the BookKeeping: " << error.what() << ENDM;
+    }
   }
 
   if (mTaskState == TaskState::Created || mTaskState == TaskState::Finished) {
@@ -218,11 +230,33 @@ void PostProcessingRunner::reset()
   mStopTriggers.clear();
 }
 
+void PostProcessingRunner::updateValidity(const Trigger& trigger)
+{
+  if (!trigger.activity.mValidity.isValid()) {
+    ILOG(Warning, Devel) << "Not updating objects validity, because the provided trigger validity is invalid ("
+                         << trigger.activity.mValidity.getMin() << ", " << trigger.activity.mValidity.getMax() << ")" << ENDM;
+    return;
+  }
+  if (trigger.activity.mValidity == gFullValidityInterval) {
+    ILOG(Warning, Devel) << "Not updating objects validity, because the provided trigger validity covers the"
+                         << " maximum possible validity, which is unexpected" << ENDM;
+    return;
+  }
+  if (!core::activity_helpers::onNumericLimit(trigger.activity.mValidity.getMin())) {
+    mActivity.mValidity.update(trigger.activity.mValidity.getMin());
+  }
+  if (!core::activity_helpers::onNumericLimit(trigger.activity.mValidity.getMax())) {
+    mActivity.mValidity.update(trigger.activity.mValidity.getMax());
+  }
+  mObjectManager->setValidity(mActivity.mValidity);
+}
+
 void PostProcessingRunner::doInitialize(const Trigger& trigger)
 {
   ILOG(Info, Support) << "Initializing the user task due to trigger '" << trigger << "'" << ENDM;
 
   mTask->initialize(trigger, mServices);
+  updateValidity(trigger);
   mTaskState = TaskState::Running;
 
   // We create the triggers just after task init (and not any sooner), so the timer triggers work as expected.
@@ -234,7 +268,8 @@ void PostProcessingRunner::doUpdate(const Trigger& trigger)
 {
   ILOG(Info, Support) << "Updating the user task due to trigger '" << trigger << "'" << ENDM;
   mTask->update(trigger, mServices);
-  mObjectManager->setValidity(ValidityInterval{ trigger.timestamp, trigger.timestamp + objectValidity });
+  updateValidity(trigger);
+
   mPublicationCallback(mObjectManager->getNonOwningArray());
 }
 
@@ -246,7 +281,8 @@ void PostProcessingRunner::doFinalize(const Trigger& trigger)
   }
   ILOG(Info, Support) << "Finalizing the user task due to trigger '" << trigger << "'" << ENDM;
   mTask->finalize(trigger, mServices);
-  mObjectManager->setValidity(ValidityInterval{ trigger.timestamp, trigger.timestamp + objectValidity });
+  updateValidity(trigger);
+
   mPublicationCallback(mObjectManager->getNonOwningArray());
   mTaskState = TaskState::Finished;
 }

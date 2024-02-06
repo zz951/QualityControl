@@ -9,11 +9,8 @@
         "name": "not_applicable"
       },
       "Activity": {
-        "number": "505618",
-        "type": "2",
-        "periodName": "",
-        "passName": "",
-        "provenance": "qc"
+        "number": "123456",
+        "type": "2"
       },
       "monitoring": {
         "url": "infologger:///debug?qc"
@@ -22,136 +19,197 @@
         "url": ""
       },
       "conditionDB": {
-        "url": "ccdb-test.cern.ch:8080"
+        "url": "http://alice-ccdb.cern.ch"
       },
       "infologger": {
-        "": "Configuration of the Infologger (optional).",
         "filterDiscardDebug": "false",
-        "": "Set to 1 to discard debug and trace messages (default: false)",
-        "filterDiscardLevel": "2",
-        "": "Message at this level or above are discarded (default: 21 - Trace)"
+        "filterDiscardLevel": "11"
       }
     },
     "tasks": {
-      "RawDataTask": {
-        "active": "true",
+      "RawData": {
+        "active": "false",
         "className": "o2::quality_control_modules::trd::RawData",
         "moduleName": "QcTRD",
         "detectorName": "TRD",
         "cycleDurationSeconds": "60",
-        "maxNumberCycles": "-1",
         "dataSource": {
           "type": "direct",
-          "query": "digits:TRD/DIGITS;tracklets:TRD/TRACKLETS;triggers:TRD/TRKTRGRD;rawstats:TRD/RAWSTATS"
-        },
-        "taskParameters": {
-          "peakregionstart": "7.0",
-          "peakregionend": "20.0",
-          "pulseheightpeaklower": "1.0",
-          "pulseheightpeakupper": "5.0"
-        },
-        "location": "remote",
-        "saveObjectsToFile": "qcrootobjects.root"
+          "query": "rawstats:TRD/RAWSTATS"
+        }
       },
-      "DigitTask": {
+      "Digits": {
         "active": "true",
         "className": "o2::quality_control_modules::trd::DigitsTask",
         "moduleName": "QcTRD",
         "detectorName": "TRD",
         "cycleDurationSeconds": "60",
-        "maxNumberCycles": "-1",
         "dataSource": {
           "type": "direct",
-          "query": "digits:TRD/DIGITS;tracklets:TRD/TRACKLETS;triggers:TRD/TRKTRGRD"
-        },
-        "taskParameters": {
-          "peakregionstart": "7.0",
-          "peakregionend": "20.0",
-          "pulseheightpeaklower": "1.0",
-          "pulseheightpeakupper": "5.0"
-        },
-        "location": "remote",
-        "saveObjectsToFile": "digitrootobjects.root"
+          "query": "digits:TRD/DIGITS;triggers:TRD/TRKTRGRD;noiseMap:TRD/NOISEMAP/0?lifetime=condition&ccdb-path=TRD/Calib/NoiseMapMCM;chamberStatus:TRD/CHSTATUS/0?lifetime=condition&ccdb-path=TRD/Calib/HalfChamberStatusQC"
+        }
       },
-      "TrackletsTask": {
+      "Tracklets": {
         "active": "true",
         "className": "o2::quality_control_modules::trd::TrackletsTask",
         "moduleName": "QcTRD",
         "detectorName": "TRD",
         "cycleDurationSeconds": "15",
-        "maxNumberCycles": "-1",
-        "dataSource_comment": "no comment",
         "dataSource": {
           "type": "direct",
-          "query": "digits:TRD/DIGITS;tracklets:TRD/TRACKLETS;triggers:TRD/TRKTRGRD"
-        },
-        "taskParameters": {
-          "peakregionstart": "7.0",
-          "peakregionend": "20.0",
-          "pulseheightpeaklower": "1.0",
-          "pulseheightpeakupper": "5.0"
-        },
-        "location": "remote",
-        "saveObjectsToFile": "trackletobjects.root"
+          "query": "tracklets:TRD/TRACKLETS;triggers:TRD/TRKTRGRD;noiseMap:TRD/NOISEMAP/0?lifetime=condition&ccdb-path=TRD/Calib/NoiseMapMCM;chamberStatus:TRD/CHSTATUS/0?lifetime=condition&ccdb-path=TRD/Calib/HalfChamberStatusQC"
+        }
       },
-      "PulseHeight": {
-        "active": "true",
-        "className": "o2::quality_control_modules::trd::PulseHeight",
-        "moduleName": "QcTRD",
-        "detectorName": "TRD",
-        "cycleDurationSeconds": "60",
-        "maxNumberCycles": "-1",
-        "dataSource": {
-          "type": "direct",
-          "query": "digits:TRD/DIGITS;tracklets:TRD/TRACKLETS;triggers:TRD/TRKTRGRD;rawstats:TRD/RAWSTATS"
-        },
-        "taskParameters": {
-          "peakregionstart": "7.0",
-          "peakregionend": "20.0",
-          "pulseheightpeaklower": "1.0",
-          "pulseheightpeakupper": "5.0"
-        },
-        "location": "remote",
-        "saveObjectsToFile": "qcpulseheight.root"
-      },
-      "PulseHeightTrackMatch": {
+      "PHTrackMatch": {
         "active": "true",
         "className": "o2::quality_control_modules::trd::PulseHeightTrackMatch",
         "moduleName": "QcTRD",
         "detectorName": "TRD",
         "cycleDurationSeconds": "15",
-        "maxNumberCycles": "-1",
-        "dataSource_comment": "no comment",
         "dataSource": {
           "type": "direct",
           "query": "phValues:TRD/PULSEHEIGHT"
-        },
-        "taskParameters": {
-          "trackType": "0xf",
-          "peakregionstart": "7.0",
-          "peakregionend": "20.0",
-          "pulseheightpeaklower": "1.0",
-          "pulseheightpeakupper": "5.0"
-        },
-        "location": "remote",
-        "saveObjectsToFile": "qcpulseheightitstpc.root"
+        }
       },
-      "TrackingTask": {
+      "Tracking": {
         "active": "true",
         "className": "o2::quality_control_modules::trd::TrackingTask",
         "moduleName": "QcTRD",
         "detectorName": "TRD",
         "cycleDurationSeconds": "60",
-        "maxNumberCycles": "-1",
         "dataSource": {
           "type": "direct",
-          "query": "tracksqc:TRD/TRACKINGQC;tracksTRD:TRD/MATCH_ITSTPC;trigrectrk:TRD/TRGREC_ITSTPC"
+          "query": "trackITSTPCTRD:TRD/MATCH_ITSTPC;trigITSTPCTRD:TRD/TRGREC_ITSTPC"
         },
         "taskParameters": {
-          "pTminvalue": "0.0"
-        },
-        "location": "remote",
-        "saveObjectsToFile": "trackingqcobject.root"
+          "detailedQC": "false",
+          "trackSources": "ITS-TPC-TRD"
+        }
+      }
+    },
+    "checks": {
+      "TrackletCountCheck": {
+        "active": "true",
+        "className": "o2::quality_control_modules::trd::TrackletCountCheck",
+        "moduleName": "QcTRD",
+        "policy": "OnAny",
+        "detectorName": "TRD",
+        "dataSource": [{
+          "type": "Task",
+          "name": "Tracklets",
+          "MOs": [ "trackletsperevent" ]
+        }],
+        "checkParameters":{
+          "LowerthresholdPerTrigger":"500.0",
+          "UpperthresholdPerTrigger":"520.0",
+          "StatThresholdPerTrigger": "100"
+        }
+      }
+    },
+    "aggregators": {
+      "TRDQuality": {
+        "active": "true",
+        "className": "o2::quality_control_modules::common::WorstOfAllAggregator",
+        "moduleName": "QualityControl",
+        "policy": "OnAll",
+        "detectorName": "TRD",
+        "dataSource": [
+          {
+            "type": "Check",
+            "name": "TrackletPerTriggerCheck"
+          }
+        ]
+      }
+    },
+    "postprocessing": {
+      "TRDTrending": {
+        "active": "true",
+        "className": "o2::quality_control::postprocessing::TRDTrending",
+        "moduleName": "QualityControl",
+        "detectorName": "TRD",
+        "dataSources": [
+          {
+            "type": "repository",
+            "path": "TRD/MO/Tracklets/",
+            "names": [ "trackletspertimeframe","trackletsperevent" ],
+            "reductorName": "o2::quality_control_modules::common::TH1Reductor",
+            "moduleName": "QcTRD"
+          }
+        ],
+        "plots": [
+          {
+            "names": ["mean_distribution_trackletpertimeframe","mean_distribution_trackletperevent"],
+            "title": ["mean distribution of tracklet per timeframe","mean distribution of tracklet per event"],
+            "varexp": ["trackletspertimeframe.mean","trackletsperevent.mean"],
+            "selection": "",
+            "option": ""
+          },
+          {
+            "names": ["mean_trend_trackletspertimeframe", "mean_trend_trackletperevent"],
+            "title": ["Mean trend of the Tracklet per time frame","Mean trend of tracklet per event"],
+            "varexp": ["trackletspertimeframe.mean:time","trackletsperevent.mean:time"],
+            "selection": "",
+            "option": "PL"
+          }
+        ],
+        "initTrigger": [
+          "newobject:ccdb:TRD/MO/Tracklets/trackletsperevent"
+        ],
+        "updateTrigger": [
+          "newobject:ccdb:TRD/MO/Tracklets/trackletsperevent","20 seconds"
+        ],
+        "stopTrigger": [
+          "usercontrol"
+        ]
+      },
+      "Quality": {
+        "active": "true",
+        "className": "o2::quality_control_modules::common::QualityTask",
+        "moduleName": "QualityControl",
+        "detectorName": "TRD",
+        "qualityGroups": [
+          {
+            "name" : "global",
+            "title" : "GLOBAL TRD QUALITY",
+            "path": "TRD/QO",
+            "ignoreQualitiesDetails" : ["Null", "Good", "Medium", "Bad"],
+            "inputObjects": [
+              {
+                "name" : "TRDQuality/TRDQuality",
+                "title" : "TRD Quality",
+                "messageBad" : "Inform TRD on-call immediately",
+                "messageMedium": "Add bookkeeping entry",
+                "messageGood": "All checks are OK",
+                "messageNull": "Some histograms are empty!!!"
+              }
+            ]
+          },
+          {
+            "name" : "TrackletQuality",
+            "title" : "TRD Tracklet Quality",
+            "path": "TRD/QO",
+            "ignoreQualitiesDetails" : [],
+            "inputObjects": [
+              {
+                "name" : "TrackletPerTriggerCheck",
+                "title" : "Check on Mean of Tracklet per Event",
+                "messageBad" : "Inform TRD on-call immediately",
+                "messageMedium": "Add bookkeeping entry",
+                "messageGood": "TrackletPerTriggerCheck check is OK",
+                "messageNull": "Some histograms are empty!!!"
+              }
+            ]
+          }
+        ],
+        "initTrigger": [
+          "newobject:ccdb:TRD/QO/TrackletPerTriggerCheck"
+        ],
+        "updateTrigger": [
+          "newobject:ccdb:TRD/QO/TrackletPerTriggerCheck","20 seconds"
+        ],
+        "stopTrigger": [
+          "userorcontrol","EOR"
+        ]
       }
     },
     "dataSamplingPolicies": []

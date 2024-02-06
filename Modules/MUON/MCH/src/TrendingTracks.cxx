@@ -17,22 +17,16 @@
 ///
 
 #include "MCH/TrendingTracks.h"
-#include "MUONCommon/MergeableTH2Ratio.h"
-#include "MCHMappingInterface/Segmentation.h"
-#include "MCHMappingSegContour/CathodeSegmentationContours.h"
 #include "QualityControl/QcInfoLogger.h"
 #include "QualityControl/DatabaseInterface.h"
 #include "QualityControl/MonitorObject.h"
 #include "QualityControl/Reductor.h"
+#include "QualityControl/ReductorTObject.h"
 #include "QualityControl/RootClassFactory.h"
 #include "QualityControl/ActivityHelpers.h"
-#include <boost/property_tree/ptree.hpp>
 #include <TH1.h>
-#include <TMath.h>
-#include <TH2.h>
 #include <TCanvas.h>
 #include <TPaveText.h>
-#include <TDatime.h>
 #include <TGraphErrors.h>
 #include <TProfile.h>
 #include <TPoint.h>
@@ -40,7 +34,6 @@
 using namespace o2::quality_control;
 using namespace o2::quality_control::core;
 using namespace o2::quality_control::postprocessing;
-using namespace o2::quality_control_modules::muon;
 using namespace o2::quality_control_modules::muonchambers;
 
 void TrendingTracks::configure(const boost::property_tree::ptree& config)
@@ -133,8 +126,9 @@ void TrendingTracks::trendValues(const Trigger& t, repository::DatabaseInterface
       moClusPerChamber = mo;
     } else {
       TObject* obj = mo ? mo->getObject() : nullptr;
-      if (obj) {
-        mReductors[dataSource.name]->update(obj);
+      auto reductor = dynamic_cast<ReductorTObject*>(mReductors[dataSource.name].get());
+      if (obj && reductor) {
+        reductor->update(obj);
       }
     }
   }

@@ -40,6 +40,7 @@
 #include "QualityControl/RootClassFactory.h"
 #include "QualityControl/ConfigParamGlo.h"
 #include "QualityControl/Bookkeeping.h"
+#include "QualityControl/WorkflowType.h"
 
 using namespace AliceO2::Common;
 using namespace AliceO2::InfoLogger;
@@ -55,7 +56,7 @@ const auto current_diagnostic = boost::current_exception_diagnostic_information;
 namespace o2::quality_control::checker
 {
 
-AggregatorRunner::AggregatorRunner(AggregatorRunnerConfig arc, const std::vector<AggregatorConfig>& acs) //, const o2::quality_control::core::InfrastructureSpec& infrastructureSpec)
+AggregatorRunner::AggregatorRunner(AggregatorRunnerConfig arc, const std::vector<AggregatorConfig>& acs)
   : mDeviceName(createAggregatorRunnerName()),
     mRunnerConfig(std::move(arc)),
     mAggregatorsConfig(acs),
@@ -88,7 +89,7 @@ void AggregatorRunner::refreshConfig(InitContext& iCtx)
       }
 
       // read the config, prepare spec
-      auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(updatedTree);
+      auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(updatedTree, workflow_type_helpers::getWorkflowType(iCtx.options()));
 
       // replace the runner config
       mRunnerConfig = AggregatorRunnerFactory::extractRunnerConfig(infrastructureSpec.common);
@@ -148,7 +149,7 @@ std::string AggregatorRunner::createAggregatorRunnerName()
 
 void AggregatorRunner::init(framework::InitContext& iCtx)
 {
-  initInfoLogger(iCtx);
+  core::initInfologger(iCtx, mRunnerConfig.infologgerDiscardParameters, "aggregator");
   refreshConfig(iCtx);
   QcInfoLogger::setDetector(AggregatorRunner::getDetectorName(mAggregators));
   Bookkeeping::getInstance().init(mRunnerConfig.bookkeepingUrl);
@@ -185,19 +186,19 @@ void AggregatorRunner::run(framework::ProcessingContext& ctx)
   framework::InputRecord& inputs = ctx.inputs();
   for (auto const& ref : InputRecordWalker(inputs)) { // InputRecordWalker because the output of CheckRunner can be multi-part
     ILOG(Debug, Trace) << "AggregatorRunner received data" << ENDM;
-    shared_ptr<const QualityObject> qo = inputs.get<QualityObject*>(ref);
+    shared_ptr<const QualityObject> const qo = inputs.get<QualityObject*>(ref);
     if (qo != nullptr) {
       ILOG(Debug, Trace) << "   It is a qo: " << qo->getName() << ENDM;
       mQualityObjects[qo->getName()] = qo;
       mTotalNumberObjectsReceived++;
-      updatePolicyManager.updateObjectRevision(qo->getName());
+      mUpdatePolicyManager.updateObjectRevision(qo->getName());
     }
   }
 
   auto qualityObjects = aggregate();
   store(qualityObjects);
 
-  updatePolicyManager.updateGlobalRevision();
+  mUpdatePolicyManager.updateGlobalRevision();
 
   sendPeriodicMonitoring();
 }
@@ -211,21 +212,21 @@ QualityObjectsType AggregatorRunner::aggregate()
     string aggregatorName = aggregator->getName();
     ILOG(Info, Devel) << "Processing aggregator: " << aggregatorName << ENDM;
 
-    if (updatePolicyManager.isReady(aggregatorName)) {
+    if (mUpdatePolicyManager.isReady(aggregatorName)) {
       ILOG(Info, Devel) << "   Quality Objects for the aggregator '" << aggregatorName << "' are  ready, aggregating" << ENDM;
-      auto newQOs = aggregator->aggregate(mQualityObjects, mActivity); // we give the whole list
+      auto newQOs = aggregator->aggregate(mQualityObjects, *mActivity); // we give the whole list
       mTotalNumberObjectsProduced += newQOs.size();
       mTotalNumberAggregatorExecuted++;
       // we consider the output of the aggregators the same way we do the output of a check
       for (const auto& qo : newQOs) {
         mQualityObjects[qo->getName()] = qo;
-        updatePolicyManager.updateObjectRevision(qo->getName());
+        mUpdatePolicyManager.updateObjectRevision(qo->getName());
       }
 
       allQOs.insert(allQOs.end(), std::make_move_iterator(newQOs.begin()), std::make_move_iterator(newQOs.end()));
       newQOs.clear();
 
-      updatePolicyManager.updateActorRevision(aggregatorName); // Was aggregated, update latest revision
+      mUpdatePolicyManager.updateActorRevision(aggregatorName); // Was aggregated, update latest revision
     } else {
       ILOG(Info, Devel) << "   Quality Objects for the aggregator '" << aggregatorName << "' are not ready, ignoring" << ENDM;
     }
@@ -236,9 +237,14 @@ QualityObjectsType AggregatorRunner::aggregate()
 void AggregatorRunner::store(QualityObjectsType& qualityObjects)
 {
   ILOG(Info, Devel) << "Storing " << qualityObjects.size() << " QualityObjects" << ENDM;
+  auto validFrom = getCurrentTimestamp();
   try {
     for (auto& qo : qualityObjects) {
       mDatabase->storeQO(qo);
+    }
+    if (!qualityObjects.empty()) {
+      auto& qo = qualityObjects.at(0);
+      ILOG(Info, Devel) << "Validity of QO '" << qo->GetName() << "' is (" << qo->getValidity().getMin() << ", " << qo->getValidity().getMax() << ")" << ENDM;
     }
   } catch (boost::exception& e) {
     ILOG(Info, Devel) << "Unable to " << diagnostic_information(e) << ENDM;
@@ -283,11 +289,11 @@ void AggregatorRunner::initAggregators()
     try {
       auto aggregator = make_shared<Aggregator>(aggregatorConfig);
       aggregator->init();
-      updatePolicyManager.addPolicy(aggregator->getName(),
-                                    aggregator->getUpdatePolicyType(),
-                                    aggregator->getObjectsNames(),
-                                    aggregator->getAllObjectsOption(),
-                                    false);
+      mUpdatePolicyManager.addPolicy(aggregator->getName(),
+                                     aggregator->getUpdatePolicyType(),
+                                     aggregator->getObjectsNames(),
+                                     aggregator->getAllObjectsOption(),
+                                     false);
       mAggregators.push_back(aggregator);
     } catch (...) {
       // catch the configuration exception and print it to avoid losing it
@@ -298,26 +304,6 @@ void AggregatorRunner::initAggregators()
   }
 
   reorderAggregators();
-}
-
-void AggregatorRunner::initInfoLogger(InitContext& iCtx)
-{
-  // TODO : the method should be merged with the other, similar, methods in *Runners
-
-  InfoLoggerContext* ilContext = nullptr;
-  AliceO2::InfoLogger::InfoLogger* il = nullptr;
-  try {
-    ilContext = &iCtx.services().get<AliceO2::InfoLogger::InfoLoggerContext>();
-    il = &iCtx.services().get<AliceO2::InfoLogger::InfoLogger>();
-  } catch (const RuntimeErrorRef& err) {
-    ILOG(Error) << "Could not find the DPL InfoLogger." << ENDM;
-  }
-
-  mRunnerConfig.infologgerDiscardParameters.discardFile = templateILDiscardFile(mRunnerConfig.infologgerDiscardParameters.discardFile, iCtx);
-  QcInfoLogger::init("aggregator",
-                     mRunnerConfig.infologgerDiscardParameters,
-                     il,
-                     ilContext);
 }
 
 void AggregatorRunner::initLibraries()
@@ -391,7 +377,7 @@ void AggregatorRunner::reorderAggregators()
     ILOG(Error, Ops) << msg << ENDM;
     BOOST_THROW_EXCEPTION(FatalException() << errinfo_details(msg));
   }
-  assert(results.size() != mAggregators.size());
+  assert(results.size() == mAggregators.size());
   mAggregators = results;
 }
 
@@ -408,21 +394,32 @@ void AggregatorRunner::sendPeriodicMonitoring()
 
 void AggregatorRunner::start(ServiceRegistryRef services)
 {
-  mActivity = computeActivity(services, mRunnerConfig.fallbackActivity);
+  mActivity = std::make_shared<Activity>(computeActivity(services, mRunnerConfig.fallbackActivity));
   mTimerTotalDurationActivity.reset();
-  QcInfoLogger::setRun(mActivity.mId);
-  QcInfoLogger::setPartition(mActivity.mPartitionName);
-  ILOG(Info, Support) << "Starting run " << mActivity.mId << ENDM;
+  QcInfoLogger::setRun(mActivity->mId);
+  QcInfoLogger::setPartition(mActivity->mPartitionName);
+  ILOG(Info, Support) << "Starting run " << mActivity->mId << ENDM;
+  for (auto& aggregator : mAggregators) {
+    aggregator->startOfActivity(*mActivity);
+  }
 
   // register ourselves to the BK
   if (gSystem->Getenv("O2_QC_REGISTER_IN_BK")) { // until we are sure it works, we have to turn it on
-    Bookkeeping::getInstance().registerProcess(mActivity.mId, mDeviceName, AggregatorRunner::getDetectorName(mAggregators), bookkeeping::DPL_PROCESS_TYPE_QC_AGGREGATOR, "");
+    ILOG(Debug, Devel) << "Registering aggregator to BookKeeping" << ENDM;
+    try {
+      Bookkeeping::getInstance().registerProcess(mActivity->mId, mDeviceName, AggregatorRunner::getDetectorName(mAggregators), bookkeeping::DPL_PROCESS_TYPE_QC_AGGREGATOR, "");
+    } catch (std::runtime_error& error) {
+      ILOG(Warning, Devel) << "Failed registration to the BookKeeping: " << error.what() << ENDM;
+    }
   }
 }
 
 void AggregatorRunner::stop()
 {
-  ILOG(Info, Support) << "Stopping run " << mActivity.mId << ENDM;
+  ILOG(Info, Support) << "Stopping run " << mActivity->mId << ENDM;
+  for (auto& aggregator : mAggregators) {
+    aggregator->endOfActivity(*mActivity);
+  }
 }
 
 void AggregatorRunner::reset()
@@ -431,7 +428,7 @@ void AggregatorRunner::reset()
 
   try {
     mCollector.reset();
-    mActivity = Activity();
+    mActivity = make_shared<Activity>();
   } catch (...) {
     // we catch here because we don't know where it will go in DPL's CallbackService
     ILOG(Error, Support) << "Error caught in reset() : "

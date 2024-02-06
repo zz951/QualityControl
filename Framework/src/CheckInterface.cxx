@@ -19,9 +19,8 @@
 
 #include <TClass.h>
 
-ClassImp(o2::quality_control::checker::CheckInterface)
-
-  using namespace std;
+using namespace std;
+using namespace o2::quality_control::core;
 
 namespace o2::quality_control::checker
 {
@@ -41,6 +40,21 @@ bool CheckInterface::isObjectCheckable(const MonitorObject* mo)
 }
 
 void CheckInterface::configure()
+{
+  // noop, override it if you want.
+}
+
+void CheckInterface::reset()
+{
+  // noop, override it if you want.
+}
+
+void CheckInterface::startOfActivity(const Activity& activity)
+{
+  // noop, override it if you want.
+}
+
+void CheckInterface::endOfActivity(const Activity& activity)
 {
   // noop, override it if you want.
 }

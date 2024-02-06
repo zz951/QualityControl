@@ -50,10 +50,20 @@ class Timekeeper
   void setEndOfActivity(validity_time_t ecsTimestamp = 0, validity_time_t configTimestamp = 0, validity_time_t currentTimestamp = 0,
                         std::function<validity_time_t(void)> ccdbTimestampAccessor = nullptr);
 
+  /// \brief sets an accessor to get the number of orbits per TF for the currently processed run
+  void setCCDBOrbitsPerTFAccessor(std::function<int(void)>);
+
   /// \brief updates the validity based on the provided timestamp (ms since epoch)
   virtual void updateByCurrentTimestamp(validity_time_t timestampMs) = 0;
   /// \brief updates the validity based on the provided TF ID
-  virtual void updateByTimeFrameID(uint32_t tfID, uint64_t nOrbitsPerTF) = 0;
+  virtual void updateByTimeFrameID(uint32_t tfID) = 0;
+
+  /// \brief decides if the current cycle should be finished and a new one started
+  ///
+  /// This method decides if the current cycle should be finished and a new one started.
+  /// In case that the cycle should be finished, the updateBy* methods should be called
+  /// after the cycle end has been done.
+  virtual bool shouldFinishCycle(const o2::framework::TimingInfo& timingInfo) = 0;
 
   /// \brief resets the state of the mCurrent* counters
   virtual void reset() = 0;
@@ -64,6 +74,7 @@ class Timekeeper
   ValidityInterval getActivityDuration() const;
 
  protected:
+  std::function<int(void)> getCCDBOrbitsPerTFAccessor(void);
   /// \brief defines how a class implementation chooses the activity (run) boundaries
   // by using an accessor to ccdb, we do not call if we are not interested
   virtual validity_time_t
@@ -73,10 +84,14 @@ class Timekeeper
                                       std::function<validity_time_t(void)> ccdbTimestampAccessor) = 0;
 
  protected:
+  // children should set these members according to the updates they receive
   ValidityInterval mActivityDuration = gInvalidValidityInterval;        // from O2StartTime to O2EndTime or current timestamp
   ValidityInterval mCurrentValidityTimespan = gInvalidValidityInterval; // since the last reset time until `update()` call
   ValidityInterval mCurrentSampleTimespan = gInvalidValidityInterval;   // since the last reset
   TimeframeIdRange mCurrentTimeframeIdRange = gInvalidTimeframeIdRange; // since the last reset
+
+ private:
+  std::function<uint64_t()> mCCDBOrbitsPerTFAccessor = nullptr;
 };
 
 } // namespace o2::quality_control::core

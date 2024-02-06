@@ -103,6 +103,7 @@ void CheckOfSlices::configure()
 Quality CheckOfSlices::check(std::map<std::string, std::shared_ptr<MonitorObject>>* moMap)
 {
   Quality totalQuality = Quality::Null;
+  totalQuality.addMetadata("Comment", mMetadataComment);
 
   std::vector<Quality> qualities;
   std::unordered_map<std::string, std::vector<std::string>> checks;
@@ -112,11 +113,15 @@ Quality CheckOfSlices::check(std::map<std::string, std::shared_ptr<MonitorObject
 
   auto mo = moMap->begin()->second;
   if (!mo) {
-    ILOG(Fatal, Support) << "Monitoring object not found" << ENDM;
+    ILOG(Error, Support) << "Monitoring object not found" << ENDM;
+    totalQuality.addMetadata(Quality::Null.getName(), "Monitoring object not found \n");
+    return totalQuality;
   }
   auto* canv = dynamic_cast<TCanvas*>(mo->getObject());
   if (!canv) {
-    ILOG(Fatal, Support) << "Canvas not found" << ENDM;
+    ILOG(Error, Support) << "Canvas not found" << ENDM;
+    totalQuality.addMetadata(Quality::Null.getName(), "Canvas not found \n");
+    return totalQuality;
   }
   TList* padList = (TList*)canv->GetListOfPrimitives();
   padList->SetOwner(kTRUE);
@@ -125,16 +130,26 @@ Quality CheckOfSlices::check(std::map<std::string, std::shared_ptr<MonitorObject
   }
   auto pad = static_cast<TPad*>(padList->At(0));
   if (!pad) {
-    ILOG(Fatal, Support) << "Could not retrieve pad containing slice graph" << ENDM;
+    ILOG(Error, Support) << "Could not retrieve pad containing slice graph" << ENDM;
+    totalQuality.addMetadata(Quality::Null.getName(), "Could not retrieve pad containing slice graph \n");
+    return totalQuality;
   }
 
   TGraphErrors* g = nullptr;
   g = static_cast<TGraphErrors*>(pad->GetPrimitive("Graph"));
   if (!g) {
-    ILOG(Fatal, Support) << "No Graph object found" << ENDM;
+    ILOG(Error, Support) << "No Graph object found" << ENDM;
+    totalQuality.addMetadata(Quality::Null.getName(), "No Graph object found \n");
+    return totalQuality;
   }
 
   const int NBins = g->GetN();
+  if (NBins == 0) {
+    totalQuality.addMetadata(Quality::Null.getName(), "Graph has no data points \n");
+    mNullString = "Graph has no data points \n";
+    return totalQuality;
+  }
+
   const double* yValues = g->GetY();
   const double* yErrors = g->GetEY();
   bool useErrors = true;
@@ -246,14 +261,13 @@ Quality CheckOfSlices::check(std::map<std::string, std::shared_ptr<MonitorObject
   }
 
   if (totalQuality == Quality::Null) {
-    mNullString = "No check performed";
+    mNullString = "No check performed \n";
   }
 
   totalQuality.addMetadata(Quality::Bad.getName(), mBadString);
   totalQuality.addMetadata(Quality::Medium.getName(), mMediumString);
   totalQuality.addMetadata(Quality::Good.getName(), mGoodString);
   totalQuality.addMetadata(Quality::Null.getName(), mNullString);
-  totalQuality.addMetadata("Comment", mMetadataComment);
 
   return totalQuality;
 }
@@ -262,7 +276,8 @@ void CheckOfSlices::beautify(std::shared_ptr<MonitorObject> mo, Quality checkRes
 {
   auto* canv = dynamic_cast<TCanvas*>(mo->getObject());
   if (!canv) {
-    ILOG(Fatal, Support) << "Canvas not found" << ENDM;
+    ILOG(Error, Support) << "Canvas not found (beautify function)" << ENDM;
+    return;
   }
   TList* padList = (TList*)canv->GetListOfPrimitives();
   padList->SetOwner(kTRUE);
@@ -271,17 +286,14 @@ void CheckOfSlices::beautify(std::shared_ptr<MonitorObject> mo, Quality checkRes
   }
   auto pad = static_cast<TPad*>(padList->At(0));
   if (!pad) {
-    ILOG(Fatal, Support) << "Could not retrieve pad containing slice graph" << ENDM;
+    ILOG(Error, Support) << "Could not retrieve pad containing slice graph (beautify function)" << ENDM;
+    return;
   }
   TGraphErrors* h = nullptr;
   h = static_cast<TGraphErrors*>(pad->GetPrimitive("Graph"));
   if (!h) {
-    ILOG(Fatal, Support) << "No Graph object found" << ENDM;
-  }
-
-  const int nPoints = h->GetN();
-  if (nPoints == 0) {
-    ILOG(Fatal, Support) << "No bins were found for the Graph!" << ENDM;
+    ILOG(Error, Support) << "No Graph object found (beautify function)" << ENDM;
+    return;
   }
 
   const double* yValues = h->GetY();
@@ -292,8 +304,8 @@ void CheckOfSlices::beautify(std::shared_ptr<MonitorObject> mo, Quality checkRes
   }
 
   TPaveText* msg = new TPaveText(0.5, 0.75, 0.9, 0.9, "NDC");
-  h->GetListOfFunctions()->Add(msg);
   msg->SetName(fmt::format("{}_msg", mo->GetName()).data());
+  h->GetListOfFunctions()->Add(msg);
 
   std::string checkMessage;
   if (checkResult == Quality::Good) {
@@ -329,6 +341,13 @@ void CheckOfSlices::beautify(std::shared_ptr<MonitorObject> mo, Quality checkRes
     checkMessage.erase(0, pos + delimiter.length());
   }
   msg->AddText(checkResult.getMetadata("Comment", "").c_str());
+
+  const int nPoints = h->GetN();
+  if (nPoints == 0) {
+    h->AddPoint(0., 0.);       // have to add dummy point, else msg is not shown
+    h->SetMarkerColor(kWhite); // hide the dummy point
+    return;
+  }
 
   const double xMin = h->GetPointX(0);
   const double xMax = h->GetPointX(nPoints - 1);

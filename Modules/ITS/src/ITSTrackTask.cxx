@@ -23,14 +23,12 @@
 #include "ReconstructionDataFormats/PrimaryVertex.h"
 #include "ITStracking/IOUtils.h"
 #include <DataFormatsITSMFT/ClusterTopology.h>
-#include "CCDB/BasicCCDBManager.h"
-#include "CCDB/CCDBTimeStampUtils.h"
 #include "Common/Utils.h"
 
 #include <Framework/DataSpecUtils.h>
 #include "ITStracking/Constants.h"
-#include "Common/TH1Ratio.h"
-#include "Common/TH2Ratio.h"
+
+#include "DCAFitter/DCAFitterN.h"
 
 using namespace o2::itsmft;
 using namespace o2::its;
@@ -46,14 +44,14 @@ ITSTrackTask::ITSTrackTask() : TaskInterface()
 ITSTrackTask::~ITSTrackTask() // make_shared objects will be delete automatically
 {
   delete hNClusters;
-  delete hNClustersReset;
   delete hVertexCoordinates;
   delete hVertexRvsZ;
   delete hVertexZ;
   delete hVertexContributors;
   delete hAssociatedClusterFraction;
   delete hNtracks;
-  delete hNtracksReset;
+  delete hTrackPtVsEta;
+  delete hTrackPtVsPhi;
 }
 
 void ITSTrackTask::initialize(o2::framework::InitContext& /*ctx*/)
@@ -65,9 +63,9 @@ void ITSTrackTask::initialize(o2::framework::InitContext& /*ctx*/)
   mVertexZsize = o2::quality_control_modules::common::getFromConfig<float>(mCustomParameters, "vertexZsize", mVertexZsize);
   mVertexRsize = o2::quality_control_modules::common::getFromConfig<float>(mCustomParameters, "vertexRsize", mVertexRsize);
   mNtracksMAX = o2::quality_control_modules::common::getFromConfig<float>(mCustomParameters, "NtracksMAX", mNtracksMAX);
-  mDoTTree = o2::quality_control_modules::common::getFromConfig<int>(mCustomParameters, "doTTree", mDoTTree);
   nBCbins = o2::quality_control_modules::common::getFromConfig<int>(mCustomParameters, "nBCbins", nBCbins);
   mDoNorm = o2::quality_control_modules::common::getFromConfig<int>(mCustomParameters, "doNorm", mDoNorm);
+  mInvMasses = o2::quality_control_modules::common::getFromConfig<int>(mCustomParameters, "InvMasses", mInvMasses);
 
   createAllHistos();
   publishHistos();
@@ -87,7 +85,6 @@ void ITSTrackTask::startOfActivity(const Activity& /*activity*/)
 void ITSTrackTask::startOfCycle()
 {
   ILOG(Debug, Devel) << "startOfCycle" << ENDM;
-  isNewCycle = true;
 }
 
 void ITSTrackTask::monitorData(o2::framework::ProcessingContext& ctx)
@@ -95,19 +92,13 @@ void ITSTrackTask::monitorData(o2::framework::ProcessingContext& ctx)
 
   ILOG(Debug, Devel) << "START DOING QC General" << ENDM;
 
-  if (isNewCycle) {
-    hNClustersReset->Reset();
-    hNtracksReset->Reset();
-    isNewCycle = false;
-  }
-
   if (mTimestamp == -1) { // get dict from ccdb
     mTimestamp = std::stol(o2::quality_control_modules::common::getFromConfig<string>(mCustomParameters, "dicttimestamp", "0"));
     long int ts = mTimestamp ? mTimestamp : ctx.services().get<o2::framework::TimingInfo>().creation;
     ILOG(Debug, Devel) << "Getting dictionary from ccdb - timestamp: " << ts << ENDM;
-    auto& mgr = o2::ccdb::BasicCCDBManager::instance();
-    mgr.setTimestamp(ts);
-    mDict = mgr.get<o2::itsmft::TopologyDictionary>("ITS/Calib/ClusterDictionary");
+
+    std::map<std::string, std::string> metadata;
+    mDict = TaskInterface::retrieveConditionAny<o2::itsmft::TopologyDictionary>("ITS/Calib/ClusterDictionary", metadata, ts);
     ILOG(Debug, Devel) << "Dictionary size: " << mDict->getSize() << ENDM;
   }
 
@@ -177,12 +168,24 @@ void ITSTrackTask::monitorData(o2::framework::ProcessingContext& ctx)
     hVerticesRof->Fill(nvtxROF);
   }
 
+  // DCAFitter2 class initialization  for the v0 part
+  using Vec3D = ROOT::Math::SVector<double, 3>; // this is a type of the fitted vertex
+  o2::vertexing::DCAFitter2 ft;
+  ft.setBz(5.0);
+  ft.setPropagateToPCA(true);
+  ft.setMaxR(30);
+  ft.setMaxDZIni(0.1);
+  ft.setMaxDXYIni(0.1);
+  ft.setMinParamChange(1e-3);
+  ft.setMinRelChi2Change(0.9);
+  ft.setMaxChi2(10);
+  // prepare variables for v0
+  float vx = 0, vy = 0, vz = 0;
+  float dca[2]{ 0., 0. };
+  float bz = 5.0;
+
   // loop on tracks per ROF
   for (int iROF = 0; iROF < trackRofArr.size(); iROF++) {
-
-    vMap.clear();
-    vEta.clear();
-    vPhi.clear();
 
     int nClusterCntTrack = 0;
     int nTracks = trackRofArr[iROF].getNEntries();
@@ -197,14 +200,14 @@ void ITSTrackTask::monitorData(o2::framework::ProcessingContext& ctx)
       hTrackPhi->getNum()->Fill(out.getPhi());
       hAngularDistribution->getNum()->Fill(Eta, out.getPhi());
       hNClusters->Fill(track.getNumberOfClusters());
-      hNClustersReset->Fill(track.getNumberOfClusters());
 
-      vMap.emplace_back(track.getPattern());
-      vEta.emplace_back(Eta);
-      vPhi.emplace_back(out.getPhi());
+      hTrackPtVsEta->Fill(out.getPt(), Eta);
+      hTrackPtVsPhi->Fill(out.getPt(), out.getPhi());
 
       hNClustersPerTrackEta->getNum()->Fill(Eta, track.getNumberOfClusters());
       hNClustersPerTrackPhi->getNum()->Fill(out.getPhi(), track.getNumberOfClusters());
+      hNClustersPerTrackPt->getNum()->Fill(out.getPt(), track.getNumberOfClusters());
+
       for (int iLayer = 0; iLayer < NLayer; iLayer++) {
         if (track.getPattern() & (0x1 << iLayer)) { // check first layer (from inside) on which there is a hit
           hHitFirstLayerPhiAll->getNum()->Fill(out.getPhi(), iLayer);
@@ -234,6 +237,91 @@ void ITSTrackTask::monitorData(o2::framework::ProcessingContext& ctx)
         double clusterSizeWithCorrection = (double)clSize[index] * (std::cos(std::atan(out.getTgl())));
         hNClusterVsChipITS->Fill(ChipID + 1, clusterSizeWithCorrection);
       }
+
+      // Find V0s
+      if (mInvMasses == 1) {
+        if (track.getSign() < 0) // choose only positive tracks
+          continue;
+        track.getImpactParams(vx, vy, vz, bz, dca);
+        if ((track.getNumberOfClusters() < 6) || (abs(track.getTgl()) > 1.5) || (abs(dca[0]) < 0.06)) // conditions for the track acceptance
+          continue;
+
+        for (int intrack = start; intrack < end; intrack++) { // goes through the tracks one more time
+          auto& ntrack = trackArr[intrack];
+          if (ntrack.getSign() > 0) // choose only negative tracks
+            continue;
+          ntrack.getImpactParams(vx, vy, vz, bz, dca);
+          if ((ntrack.getNumberOfClusters() < 6) || (abs(ntrack.getTgl()) > 1.5) || (abs(dca[0]) < 0.06)) // conditions for the track acceptance
+            continue;
+
+          int nc = 0;
+          try {
+            nc = ft.process(track, ntrack);
+          } catch (...) {
+            continue;
+          }
+          if (nc == 0)
+            continue;
+
+          int ibest = 0;
+          float bestChi2 = 1e7;
+          for (int i = 0; i < nc; i++) {
+            auto chi2 = ft.getChi2AtPCACandidate(i);
+            if (chi2 > bestChi2)
+              continue;
+            bestChi2 = chi2;
+            ibest = i;
+          }
+          // conditions for v0
+          auto vtx = ft.getPCACandidate(ibest);
+          auto x = vtx[0] + 0.02985;
+          auto y = vtx[1] + 0.01949;
+          auto r = sqrt(x * x + y * y);
+          if ((r < 0.5) || (r > 3.5))
+            continue;
+
+          const auto& t0 = ft.getTrack(0, ibest); // Positive daughter track
+          const auto& t1 = ft.getTrack(1, ibest); // Negative daughter track
+
+          auto r0 = t0.getXYZGlo();
+          auto r1 = t1.getXYZGlo();
+          auto dx = r0.X() - r1.X();
+          auto dy = r0.Y() - r1.Y();
+          auto dz = r0.Z() - r1.Z();
+          auto d = sqrt(dx * dx + dy * dy + dz * dz);
+          if (d > 0.02)
+            continue;
+          std::array<float, 3> p0; // Positive daughter momentum
+          t0.getPxPyPzGlo(p0);
+          std::array<float, 3> p1; // Negative daughter momentum
+          t1.getPxPyPzGlo(p1);
+          std::array<float, 3> v0p; // V0 particle momentum
+          v0p = { p0[0] + p1[0], p0[1] + p1[1], p0[2] + p1[2] };
+
+          // Strangness inv mass calculation
+          auto pV0 = sqrt(v0p[0] * v0p[0] + v0p[1] * v0p[1] + v0p[2] * v0p[2]); // Particle momentum
+          auto p2DaughterPos = p0[0] * p0[0] + p0[1] * p0[1] + p0[2] * p0[2];   // Positive daughter momentum
+          auto p2DaughterNeg = p1[0] * p1[0] + p1[1] * p1[1] + p1[2] * p1[2];   // Negative daughter momentum
+                                                                                // K0s
+          auto enDaughterPos = sqrt(mPiInvMass * mPiInvMass + p2DaughterPos);   // Positive daughter energy
+          auto enDaughterNeg = sqrt(mPiInvMass * mPiInvMass + p2DaughterNeg);   // Negative daughter energy
+          auto enV0 = enDaughterPos + enDaughterNeg;
+          auto K0sInvMass = sqrt(enV0 * enV0 - pV0 * pV0);
+          hInvMassK0s->Fill(K0sInvMass);
+          // Lambda
+          enDaughterPos = sqrt(mProtonInvMass * mProtonInvMass + p2DaughterPos); // Positive daughter energy
+          enDaughterNeg = sqrt(mPiInvMass * mPiInvMass + p2DaughterNeg);         // Negative daughter energy
+          enV0 = enDaughterPos + enDaughterNeg;
+          auto LambdaInvMass = sqrt(enV0 * enV0 - pV0 * pV0);
+          hInvMassLambda->Fill(LambdaInvMass);
+          // LambdaBar
+          enDaughterPos = sqrt(mPiInvMass * mPiInvMass + p2DaughterPos);         // Positive daughter energy
+          enDaughterNeg = sqrt(mProtonInvMass * mProtonInvMass + p2DaughterNeg); // Negative daughter energy
+          enV0 = enDaughterPos + enDaughterNeg;
+          auto LambdaBarInvMass = sqrt(enV0 * enV0 - pV0 * pV0);
+          hInvMassLambdaBar->Fill(LambdaBarInvMass);
+        }
+      }
     }
 
     int nTotCls = clusRofArr[iROF].getNEntries();
@@ -241,13 +329,10 @@ void ITSTrackTask::monitorData(o2::framework::ProcessingContext& ctx)
     float clusterRatio = nTotCls > 0 ? (float)nClusterCntTrack / (float)nTotCls : -1;
     hAssociatedClusterFraction->Fill(clusterRatio);
     hNtracks->Fill(nTracks);
-    hNtracksReset->Fill(nTracks);
 
     const auto bcdata = trackRofArr[iROF].getBCData();
     hClusterVsBunchCrossing->Fill(bcdata.bc, clusterRatio);
 
-    if (mDoTTree)
-      tClusterMap->Fill();
   } // end loop on ROFs
 
   mNRofs += trackRofArr.size();
@@ -265,6 +350,7 @@ void ITSTrackTask::monitorData(o2::framework::ProcessingContext& ctx)
   hTrackPhi->getDen()->SetBinContent(1, normalization);
   hNClustersPerTrackEta->getDen()->SetBinContent(1, 1, normalization);
   hNClustersPerTrackPhi->getDen()->SetBinContent(1, 1, normalization);
+  hNClustersPerTrackPt->getDen()->SetBinContent(1, 1, normalization);
   hHitFirstLayerPhiAll->getDen()->SetBinContent(1, 1, normalization);
   hHitFirstLayerPhi4cls->getDen()->SetBinContent(1, 1, normalization);
   hHitFirstLayerPhi5cls->getDen()->SetBinContent(1, 1, normalization);
@@ -297,6 +383,7 @@ void ITSTrackTask::endOfCycle()
   hTrackPhi->update();
   hNClustersPerTrackEta->update();
   hNClustersPerTrackPhi->update();
+  hNClustersPerTrackPt->update();
   hHitFirstLayerPhiAll->update();
   hHitFirstLayerPhi4cls->update();
   hHitFirstLayerPhi5cls->update();
@@ -319,7 +406,7 @@ void ITSTrackTask::reset()
   hTrackEta->Reset();
   hVerticesRof->Reset();
   nVertices = 0;
-
+  mNRofs = 0;
   hVertexCoordinates->Reset();
   hVertexRvsZ->Reset();
   hVertexZ->Reset();
@@ -329,6 +416,7 @@ void ITSTrackTask::reset()
   hNtracks->Reset();
   hNClustersPerTrackEta->Reset();
   hNClustersPerTrackPhi->Reset();
+  hNClustersPerTrackPt->Reset();
   hHitFirstLayerPhiAll->Reset();
   hHitFirstLayerPhi4cls->Reset();
   hHitFirstLayerPhi5cls->Reset();
@@ -336,17 +424,17 @@ void ITSTrackTask::reset()
   hHitFirstLayerPhi7cls->Reset();
   hClusterVsBunchCrossing->Reset();
   hNClusterVsChipITS->Reset();
+
+  hInvMassK0s->Reset();
+  hInvMassLambda->Reset();
+  hInvMassLambdaBar->Reset();
+
+  hTrackPtVsEta->Reset();
+  hTrackPtVsPhi->Reset();
 }
 
 void ITSTrackTask::createAllHistos()
 {
-  tClusterMap = new TTree("ClusterMap", "Cluster Map");
-  tClusterMap->Branch("bitmap", &vMap);
-  tClusterMap->Branch("eta", &vEta);
-  tClusterMap->Branch("phi", &vPhi);
-  if (mDoTTree)
-    addObject(tClusterMap);
-
   hAngularDistribution = std::make_unique<TH2DRatio>("AngularDistribution", "AngularDistribution", 40, -2.0, 2.0, 60, 0, TMath::TwoPi(), true);
   if (mDoNorm) {
     hAngularDistribution->SetBit(TH1::kIsAverage);
@@ -361,12 +449,6 @@ void ITSTrackTask::createAllHistos()
   addObject(hNClusters);
   formatAxes(hNClusters, "Number of clusters per Track", "Counts", 1, 1.10);
   hNClusters->SetStats(0);
-
-  hNClustersReset = new TH1D("NClustersReset", "NClustersReset", 15, -0.5, 14.5);
-  hNClustersReset->SetTitle("hNClusters in one cycle");
-  addObject(hNClustersReset);
-  formatAxes(hNClustersReset, "Number of clusters per Track", "Counts", 1, 1.10);
-  hNClustersReset->SetStats(0);
 
   hTrackEta = std::make_unique<TH1DRatio>("EtaDistribution", "EtaDistribution", 40, -2.0, 2.0, true);
   if (mDoNorm) {
@@ -428,12 +510,6 @@ void ITSTrackTask::createAllHistos()
   formatAxes(hNtracks, "# tracks", "Counts", 1, 1.10);
   hNtracks->SetStats(0);
 
-  hNtracksReset = new TH1D("NtracksReset", "NtracksReset", (int)mNtracksMAX, 0, mNtracksMAX);
-  hNtracksReset->SetTitle("The number of tracks event by event for last QC cycle");
-  addObject(hNtracksReset);
-  formatAxes(hNtracksReset, "# tracks", "Counts", 1, 1.10);
-  hNtracksReset->SetStats(0);
-
   hNClustersPerTrackEta = std::make_unique<TH2DRatio>("NClustersPerTrackEta", "NClustersPerTrackEta", 400, -2.0, 2.0, 15, -0.5, 14.5, true);
   if (mDoNorm) {
     hNClustersPerTrackEta->SetBit(TH1::kIsAverage);
@@ -443,7 +519,7 @@ void ITSTrackTask::createAllHistos()
   formatAxes(hNClustersPerTrackEta.get(), "#eta", "# of Clusters per Track", 1, 1.10);
   hNClustersPerTrackEta->SetStats(0);
 
-  hNClustersPerTrackPhi = std::make_unique<TH2DRatio>("NClustersPerTrackPhi", "NClustersPerTrackPhi", 65, -0.1, TMath::TwoPi(), 15, -0.5, 14.5, true);
+  hNClustersPerTrackPhi = std::make_unique<TH2DRatio>("NClustersPerTrackPhi", "NClustersPerTrackPhi", 65, 0, TMath::TwoPi(), 15, -0.5, 14.5, true);
   if (mDoNorm) {
     hNClustersPerTrackPhi->SetBit(TH1::kIsAverage);
   }
@@ -451,6 +527,15 @@ void ITSTrackTask::createAllHistos()
   addObject(hNClustersPerTrackPhi.get());
   formatAxes(hNClustersPerTrackPhi.get(), "#phi", "# of Clusters per Track", 1, 1.10);
   hNClustersPerTrackPhi->SetStats(0);
+
+  hNClustersPerTrackPt = std::make_unique<TH2DRatio>("NClustersPerTrackPt", "NClustersPerTrackPt", 150, 0, 15, 15, -0.5, 14.5, true);
+  if (mDoNorm) {
+    hNClustersPerTrackPt->SetBit(TH1::kIsAverage);
+  }
+  hNClustersPerTrackPt->SetTitle("#it{p_{T}} vs NClusters Per Track");
+  addObject(hNClustersPerTrackPt.get());
+  formatAxes(hNClustersPerTrackPt.get(), "#it{p_{T}} (GeV/c)", "# of Clusters per Track", 1, 1.10);
+  hNClustersPerTrackPt->SetStats(0);
 
   hHitFirstLayerPhiAll = std::make_unique<TH2DRatio>("HitFirstLayerAll", "HitFirstLayerPhiAll", 65, -0.1, TMath::TwoPi(), 4, -0.5, 3.5, true);
   if (mDoNorm) {
@@ -532,6 +617,35 @@ void ITSTrackTask::createAllHistos()
     auto line = new TLine(ChipBoundary[l], 0, ChipBoundary[l], 15);
     hNClusterVsChipITS->GetListOfFunctions()->Add(line);
   }
+
+  // Invariant mass K0s, Lambda, LambdaBar
+  hInvMassK0s = new TH1D("hInvMassK0s", "K0s invariant mass", 160, 0.0, 1.0);
+  hInvMassK0s->SetTitle(Form("Invariant mass of K0s"));
+  addObject(hInvMassK0s);
+  formatAxes(hInvMassK0s, "m_{inv} (Gev/c)", "Counts", 1, 1.10);
+  hInvMassK0s->SetStats(0);
+
+  hInvMassLambda = new TH1D("hInvMassLambda", "Lambda invariant mass", 400, 1.0, 2.0);
+  hInvMassLambda->SetTitle(Form("Invariant mass of Lambda"));
+  addObject(hInvMassLambda);
+  formatAxes(hInvMassLambda, "m_{inv} (Gev/c)", "Counts", 1, 1.10);
+  hInvMassLambda->SetStats(0);
+
+  hInvMassLambdaBar = new TH1D("hInvMassLambdaBar", "LambdaBar invariant mass", 400, 1.0, 2.0);
+  hInvMassLambdaBar->SetTitle(Form("Invariant mass of LambdaBar"));
+  addObject(hInvMassLambdaBar);
+  formatAxes(hInvMassLambdaBar, "m_{inv} (Gev/c)", "Counts", 1, 1.10);
+  hInvMassLambdaBar->SetStats(0);
+
+  hTrackPtVsEta = new TH2D("hTrackPtVsEta", "Track #it{p}_{T} Vs #eta", 150, 0, 15, 40, -2.0, 2.0);
+  addObject(hTrackPtVsEta);
+  formatAxes(hTrackPtVsEta, "#it{p}_{T} (GeV/#it{c})", "#eta", 1, 1.10);
+  hTrackPtVsEta->SetStats(0);
+
+  hTrackPtVsPhi = new TH2D("hTrackPtVsPhi", "Track #it{p}_{T} Vs #phi", 150, 0, 15, 65, 0, TMath::TwoPi());
+  addObject(hTrackPtVsPhi);
+  formatAxes(hTrackPtVsPhi, "#it{p}_{T} (GeV/#it{c})", "#phi", 1, 1.10);
+  hTrackPtVsPhi->SetStats(0);
 }
 
 void ITSTrackTask::addObject(TObject* aObject)

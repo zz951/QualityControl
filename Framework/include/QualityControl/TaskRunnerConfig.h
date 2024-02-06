@@ -47,6 +47,7 @@ struct TaskRunnerConfig {
   std::string className;
   std::vector<std::pair<size_t, size_t>> cycleDurations = {};
   int maxNumberCycles;
+  bool critical;
   std::string consulUrl{};
   std::string conditionUrl{};
   std::string monitoringUrl{};
@@ -63,6 +64,8 @@ struct TaskRunnerConfig {
   Activity fallbackActivity;
   std::shared_ptr<o2::base::GRPGeomRequest> grpGeomRequest;
   std::shared_ptr<o2::globaltracking::DataRequest> globalTrackingDataRequest;
+  std::vector<std::string> movingWindows;
+  bool disableLastCycle = false;
 };
 
 } // namespace o2::quality_control::core

@@ -26,6 +26,7 @@
 #include "Common/Utils.h"
 
 #include "FITCommon/HelperHist.h"
+#include "FITCommon/HelperCommon.h"
 #include "FITCommon/HelperFIT.h"
 
 namespace o2::quality_control_modules::ft0
@@ -71,19 +72,23 @@ void DigitQcTask::rebinFromConfig()
 
   const std::string rebinKeyword = "binning";
   const char* channelIdPlaceholder = "#";
-  for (auto& param : mCustomParameters.getAllDefaults()) {
-    if (param.first.rfind(rebinKeyword, 0) != 0)
-      continue;
-    std::string hName = param.first.substr(rebinKeyword.length() + 1);
-    std::string binning = param.second.c_str();
-    if (hName.find(channelIdPlaceholder) != std::string::npos) {
-      for (const auto& chID : mSetAllowedChIDs) {
-        std::string hNameCur = hName.substr(0, hName.find(channelIdPlaceholder)) + std::to_string(chID) + hName.substr(hName.find(channelIdPlaceholder) + 1);
-        rebinHisto(hNameCur, binning);
+  try {
+    for (auto& param : mCustomParameters.getAllDefaults()) {
+      if (param.first.rfind(rebinKeyword, 0) != 0)
+        continue;
+      std::string hName = param.first.substr(rebinKeyword.length() + 1);
+      std::string binning = param.second.c_str();
+      if (hName.find(channelIdPlaceholder) != std::string::npos) {
+        for (const auto& chID : mSetAllowedChIDs) {
+          std::string hNameCur = hName.substr(0, hName.find(channelIdPlaceholder)) + std::to_string(chID) + hName.substr(hName.find(channelIdPlaceholder) + 1);
+          rebinHisto(hNameCur, binning);
+        }
+      } else {
+        rebinHisto(hName, binning);
       }
-    } else {
-      rebinHisto(hName, binning);
     }
+  } catch (std::out_of_range& oor) {
+    ILOG(Error) << "Cannot access the default custom parameters : " << oor.what() << ENDM;
   }
 }
 
@@ -289,7 +294,7 @@ void DigitQcTask::initialize(o2::framework::InitContext& /*ctx*/)
   if (auto param = mCustomParameters.find("ChannelIDs"); param != mCustomParameters.end()) {
     const auto chIDs = param->second;
     const std::string del = ",";
-    vecChannelIDs = parseParameters<unsigned int>(chIDs, del);
+    vecChannelIDs = helper::parseParameters<unsigned int>(chIDs, del);
   }
   for (const auto& entry : vecChannelIDs) {
     mSetAllowedChIDs.insert(entry);
@@ -298,7 +303,7 @@ void DigitQcTask::initialize(o2::framework::InitContext& /*ctx*/)
   if (auto param = mCustomParameters.find("ChannelIDsAmpVsTime"); param != mCustomParameters.end()) {
     const auto chIDs = param->second;
     const std::string del = ",";
-    vecChannelIDsAmpVsTime = parseParameters<unsigned int>(chIDs, del);
+    vecChannelIDsAmpVsTime = helper::parseParameters<unsigned int>(chIDs, del);
   }
   for (const auto& entry : vecChannelIDsAmpVsTime) {
     mSetAllowedChIDsAmpVsTime.insert(entry);

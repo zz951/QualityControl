@@ -19,7 +19,7 @@
 
 #include "QualityControl/DatabaseInterface.h"
 #include <Common/Timer.h>
-#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/ptree_fwd.hpp>
 #include <memory>
 #include <string>
 
@@ -72,21 +72,21 @@ class CcdbDatabase : public DatabaseInterface
                 std::string const& detectorName, std::string const& taskName, long from = -1, long to = -1) override;
 
   void* retrieveAny(std::type_info const& tinfo, std::string const& path,
-                    std::map<std::string, std::string> const& metadata, long timestamp = -1,
+                    std::map<std::string, std::string> const& metadata, long timestamp = Timestamp::Current,
                     std::map<std::string, std::string>* headers = nullptr,
                     const std::string& createdNotAfter = "", const std::string& createdNotBefore = "") override;
 
   // retrieval - MO - deprecated
-  std::shared_ptr<o2::quality_control::core::MonitorObject> retrieveMO(std::string objectPath, std::string objectName, long timestamp = -1, const core::Activity& activity = {}) override;
+  std::shared_ptr<o2::quality_control::core::MonitorObject> retrieveMO(std::string objectPath, std::string objectName, long timestamp = Timestamp::Current, const core::Activity& activity = {}) override;
   // retrieval - QO - deprecated
-  std::shared_ptr<o2::quality_control::core::QualityObject> retrieveQO(std::string qoPath, long timestamp = -1, const core::Activity& activity = {}) override;
+  std::shared_ptr<o2::quality_control::core::QualityObject> retrieveQO(std::string qoPath, long timestamp = Timestamp::Current, const core::Activity& activity = {}) override;
   std::shared_ptr<o2::quality_control::TimeRangeFlagCollection> retrieveTRFC(const std::string& name, const std::string& detector, int runNumber = 0,
                                                                              const std::string& passName = "", const std::string& periodName = "",
                                                                              const std::string& provenance = "", long timestamp = -1) override;
 
   // retrieval - general
   std::string retrieveJson(std::string path, long timestamp, const std::map<std::string, std::string>& metadata) override;
-  TObject* retrieveTObject(std::string path, const std::map<std::string, std::string>& metadata, long timestamp = -1, std::map<std::string, std::string>* headers = nullptr) override;
+  TObject* retrieveTObject(std::string path, const std::map<std::string, std::string>& metadata, long timestamp = Timestamp::Current, std::map<std::string, std::string>* headers = nullptr) override;
 
   void disconnect() override;
   void prepareTaskDataContainer(std::string taskName) override;
@@ -110,6 +110,14 @@ class CcdbDatabase : public DatabaseInterface
    * @return The list of folder and/or objects as Ptree
    */
   boost::property_tree::ptree getListingAsPtree(const std::string& path, const std::map<std::string, std::string>& metadata = {}, bool latestOnly = false);
+
+  /**
+   * Return validity of the latest matching object
+   * @param path the folder we want to list the children of.
+   * @param metadata metadata to filter queried objects.
+   * @return validity of the latest matching object
+   */
+  core::ValidityInterval getLatestObjectValidity(const std::string& path, const std::map<std::string, std::string>& metadata) override;
 
   /**
    * \brief Returns a vector of all 'valid from' timestamps for an object.

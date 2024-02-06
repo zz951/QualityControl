@@ -20,45 +20,32 @@
 #include "TMath.h"
 // O2 includes
 #include "QualityControl/QcInfoLogger.h"
-#include "DataFormatsTRD/TrackTRD.h"
-#include "DataFormatsTRD/TrackTriggerRecord.h"
-#include "DataFormatsTRD/Tracklet64.h"
-#include "DataFormatsGlobalTracking/RecoContainer.h"
-#include "DataFormatsTRD/CalibratedTracklet.h"
 #include "TRDQC/Tracking.h"
 #include <Framework/InputRecord.h>
-#include "CCDB/BasicCCDBManager.h"
 // QC includes
 #include "TRD/TrackingTask.h"
+#include "Common/Utils.h"
 
 using namespace o2::trd;
 using namespace o2::trd::constants;
+using namespace o2::quality_control_modules::common;
 
 namespace o2::quality_control_modules::trd
 {
-using GTrackID = o2::dataformats::GlobalTrackID;
-
-void TrackingTask::retrieveCCDBSettings()
-{
-  if (auto param = mCustomParameters.find("ccdbtimestamp"); param != mCustomParameters.end()) {
-    mTimestamp = std::stol(mCustomParameters["ccdbtimestamp"]);
-    ILOG(Debug, Devel) << "configure() : using ccdbtimestamp = " << mTimestamp << ENDM;
-  } else {
-    mTimestamp = o2::ccdb::getCurrentTimestamp();
-    ILOG(Debug, Devel) << "configure() : using default timestam of now = " << mTimestamp << ENDM;
-  }
-}
+using GID = o2::dataformats::GlobalTrackID;
 
 void TrackingTask::initialize(o2::framework::InitContext& /*ctx*/)
 {
   ILOG(Debug, Devel) << "initialize TRD TrackingTask" << ENDM;
 
-  // minimum pT of tracks is configurable from json
-  if (auto param = mCustomParameters.find("pTminvalue"); param != mCustomParameters.end()) {
-    mPtMin = std::stof(param->second);
-  }
+  mPtMin = getFromConfig<float>(mCustomParameters, "pTminvalue", 0.f);
+  mDetailedTrackQC = getFromConfig<bool>(mCustomParameters, "detailedQC");
+  std::string trackSources = getFromConfig<string>(mCustomParameters, "trackSources", "all");
+  GID::mask_t allowedSources = GID::getSourcesMask("ITS-TPC,TPC-TRD,ITS-TPC-TRD");
+  mSrcSelected = allowedSources & GID::getSourcesMask(trackSources);
+  mDataRequest = std::make_shared<o2::globaltracking::DataRequest>();
+  mDataRequest->requestTracks(mSrcSelected, false);
 
-  retrieveCCDBSettings();
   buildHistograms();
 }
 
@@ -76,68 +63,134 @@ void TrackingTask::monitorData(o2::framework::ProcessingContext& ctx)
 {
   ILOG(Debug, Devel) << "monitorData" << ENDM;
 
-  auto trackqcArr = ctx.inputs().get<gsl::span<o2::trd::TrackQC>>("tracksqc");
-  auto trackTRDArr = ctx.inputs().get<gsl::span<o2::trd::TrackTRD>>("tracksTRD");
-  auto tracktrigArr = ctx.inputs().get<gsl::span<o2::trd::TrackTriggerRecord>>("trigrectrk");
+  mRecoCont.collectData(ctx, *mDataRequest.get());
+  std::vector<uint8_t> sources;
+  if (mSrcSelected[GID::Source::ITSTPCTRD] == 1) {
+    mITSTPCTRDTracks = mRecoCont.getITSTPCTRDTracks<TrackTRD>();
+    mTrigITSTPCTRD = mRecoCont.getITSTPCTRDTriggers();
+    sources.push_back(GID::Source::ITSTPCTRD);
+  }
+  if (mSrcSelected[GID::Source::TPCTRD] == 1) {
+    mTPCTRDTracks = mRecoCont.getTPCTRDTracks<TrackTRD>();
+    mTrigTPCTRD = mRecoCont.getTPCTRDTriggers();
+    sources.push_back(GID::Source::TPCTRD);
+  }
+  if (mSrcSelected[GID::Source::ITSTPC] == 1) {
+    mTPCITSTracks = mRecoCont.getTPCITSTracks();
+    sources.push_back(GID::Source::ITSTPC);
+  }
 
-  for (const auto& tracktrig : tracktrigArr) {
-    int start = tracktrig.getFirstTrack();
-    int end = start + tracktrig.getNumberOfTracks();
-    mNtracks->Fill(tracktrig.getNumberOfTracks());
-    for (int itrack = start; itrack < end; ++itrack) {
-      const auto& trackTRD = trackTRDArr[itrack];
-      // remove tracks with pt below threshold
-      if (trackTRD.getPt() < mPtMin) {
-        continue;
-      }
-      // filling track information
-      mTrackPt->Fill(trackTRD.getPt());
-      mTrackPhi->Fill(trackTRD.getPhiPos());
-      mNtracklets->Fill(trackTRD.getNtracklets());
-      mTrackChi2->Fill(trackTRD.getReducedChi2());
-      mTrackEta->Fill(trackTRD.getEta());
-      // find charge bin of the track
-      int charge = trackTRD.getCharge() > 0 ? 0 : 1;
-      // eta-phi distribution of tracklets per layer
-      mTrackletsEtaPhi[charge]->Fill(trackTRD.getEta(), trackTRD.getPhiPos(), trackTRD.getNtracklets());
-      for (int iLayer = 0; iLayer < NLAYER; iLayer++) {
-        // skip layers with no tracklet
-        if (trackTRD.getTrackletIndex(iLayer) < 0) {
+  const gsl::span<const TrackQC>* trackQcPtr = nullptr;
+  using trkQcType = std::decay_t<decltype(ctx.inputs().get<gsl::span<o2::trd::TrackQC>>(""))>;
+  std::optional<trkQcType> trackQc;
+  if (mDetailedTrackQC) {
+    trackQc.emplace(ctx.inputs().get<gsl::span<o2::trd::TrackQC>>("tracksqc"));
+    trackQcPtr = &trackQc.value();
+  }
+
+  std::vector<double_t> trdTrigTimes = {};
+  for (auto src : sources) {
+    const gsl::span<const TrackTriggerRecord>* trackTriggers = (src == GID::Source::ITSTPCTRD) ? &mTrigITSTPCTRD : &mTrigTPCTRD;
+    const gsl::span<const TrackTRD>* tracks = (src == GID::Source::ITSTPCTRD) ? &mITSTPCTRDTracks : &mTPCTRDTracks;
+    for (const auto& tracktrig : *trackTriggers) {
+      int start = tracktrig.getFirstTrack();
+      int end = start + tracktrig.getNumberOfTracks();
+      mNtracks->Fill(tracktrig.getNumberOfTracks());
+      trdTrigTimes.push_back(tracktrig.getBCData().differenceInBC(mRecoCont.startIR) * o2::constants::lhc::LHCBunchSpacingMUS);
+      for (int itrack = start; itrack < end; ++itrack) {
+        const auto& trackTRD = (*tracks)[itrack];
+        // remove tracks with pt below threshold
+        if (trackTRD.getPt() < mPtMin) {
           continue;
         }
-        // eta-phi distribution per layer
-        mTracksEtaPhiPerLayer[charge][iLayer]->Fill(trackTRD.getEta(), trackTRD.getPhiPos());
-      } // end of loop over layers
-    }   // end of loop over tracks
-  }     // end of loop over track trigger records
+        // filling track information
+        mTrackPt->Fill(trackTRD.getPt());
+        mTrackPhi->Fill(trackTRD.getOuterParam().getPhiPos());
+        mNtracklets->Fill(trackTRD.getNtracklets());
+        mTrackChi2->Fill(trackTRD.getReducedChi2());
+        mTrackEta->Fill(trackTRD.getOuterParam().getEta());
+        mTrackEtaPhi->Fill(trackTRD.getOuterParam().getEta(), trackTRD.getOuterParam().getPhiPos());
+        // find charge bin of the track
+        int charge = trackTRD.getCharge() > 0 ? 0 : 1;
+        // eta-phi distribution of tracklets per layer
+        mTrackletsEtaPhi[charge]->Fill(trackTRD.getOuterParam().getEta(), trackTRD.getOuterParam().getPhiPos(), trackTRD.getNtracklets());
+        mTrackletsEtaPhi[2]->Fill(trackTRD.getOuterParam().getEta(), trackTRD.getOuterParam().getPhiPos(), trackTRD.getNtracklets());
+        for (int iLayer = 0; iLayer < NLAYER; iLayer++) {
+          // skip layers with no tracklet
+          if (trackTRD.getTrackletIndex(iLayer) < 0) {
+            continue;
+          }
+          // eta-phi distribution per layer
+          mTracksEtaPhiPerLayer[iLayer][charge]->Fill(trackTRD.getOuterParam().getEta(), trackTRD.getOuterParam().getPhiPos());
+        } // end of loop over layers
+      }   // end of loop over tracks
+    }     // end of loop over track trigger records
 
-  // Residuals in y and z using TRD/TRACKINGQC
-  for (const auto& trackqc : trackqcArr) {
-    // match only ITS-TPC tracks
-    auto trackType = trackqc.refGlobalTrackId.getSource();
-    if (!(trackType == GTrackID::Source::ITSTPC)) {
-      continue;
+    if (src == GID::Source::ITSTPC) {
+      for (size_t itrk = 0; itrk < mTPCITSTracks.size(); ++itrk) {
+        const auto& track = mTPCITSTracks[itrk];
+        double trackTime = track.getTimeMUS().getTimeStamp();
+        double trackTimeError = track.getTimeMUS().getTimeStampError();
+
+        bool hasTRDTrigger = std::any_of(trdTrigTimes.begin(), trdTrigTimes.end(), [&](double trdTime) {
+          return (trackTime - trackTimeError <= trdTime) && (trackTime + trackTimeError >= trdTime);
+        });
+        if ((!hasTRDTrigger) || (abs(track.getEta()) > 0.84)) {
+          continue;
+        }
+
+        //  filling track information
+        mTrackPtTPCITS->Fill(track.getPt());
+        if (track.getPt() > mPtMin) {
+          mTrackEtaTPCITS->Fill(track.getEta());
+          mTrackPhiTPCITS->Fill(track.getPhi());
+        }
+      }
     }
-    // remove tracks with pt below threshold
-    if (trackqc.trackTRD.getPt() < mPtMin) {
-      continue;
-    }
-    for (int iLayer = 0; iLayer < NLAYER; iLayer++) {
-      // skip layers with no tracklet
-      if (trackqc.trackTRD.getTrackletIndex(iLayer) < 0) {
+    setEfficiency(mEfficiencyPt, mTrackPt, mTrackPtTPCITS);
+    setEfficiency(mEfficiencyEta, mTrackEta, mTrackEtaTPCITS);
+    setEfficiency(mEfficiencyPhi, mTrackPhi, mTrackPhiTPCITS);
+  }
+  trdTrigTimes.clear();
+
+  if (mDetailedTrackQC && trackQcPtr) {
+    // Residuals in y and z using TRD/TRACKINGQC
+    for (const auto& trackqc : *trackQcPtr) {
+      // match only ITS-TPC tracks
+      auto trackType = trackqc.refGlobalTrackId.getSource();
+      if (!(trackType == GID::Source::ITSTPC)) {
         continue;
       }
-      // residuals information
-      mDeltaY->Fill(trackqc.trackProp[iLayer].getY() - trackqc.trackletY[iLayer]);
-      mDeltaZ->Fill(trackqc.trackProp[iLayer].getZ() - trackqc.trackletZ[iLayer]);
-      mDeltaYDet->Fill(trackqc.trklt64[iLayer].getDetector(), trackqc.trackProp[iLayer].getY() - trackqc.trackletY[iLayer]);
-      mDeltaZDet->Fill(trackqc.trklt64[iLayer].getDetector(), trackqc.trackProp[iLayer].getZ() - trackqc.trackletZ[iLayer]);
-      mDeltaYvsSphi->Fill(trackqc.trackProp[iLayer].getSnp(), trackqc.trackProp[iLayer].getY() - trackqc.trackletY[iLayer]);
-      mDeltaYinEtaPerLayer[iLayer]->Fill(trackqc.trackProp[iLayer].getEta(), trackqc.trackProp[iLayer].getY() - trackqc.trackletY[iLayer]);
-      mDeltaYinPhiPerLayer[iLayer]->Fill(trackqc.trackProp[iLayer].getPhiPos(), trackqc.trackProp[iLayer].getY() - trackqc.trackletY[iLayer]);
-      mTrackletDef->Fill(trackqc.trackProp[iLayer].getSnp(), trackqc.trkltCalib[iLayer].getDy());
-    } // end of loop over layers
-  }   // end of loop over tracks
+      // remove tracks with pt below threshold
+      if (trackqc.trackTRD.getPt() < mPtMin) {
+        continue;
+      }
+      for (int iLayer = 0; iLayer < NLAYER; iLayer++) {
+        // skip layers with no tracklet
+        if (trackqc.trackTRD.getTrackletIndex(iLayer) < 0) {
+          continue;
+        }
+        // residuals information
+        mDeltaY->Fill(trackqc.trackProp[iLayer].getY() - trackqc.trackletY[iLayer]);
+        mDeltaZ->Fill(trackqc.trackProp[iLayer].getZ() - trackqc.trackletZ[iLayer]);
+        mDeltaYDet->Fill(trackqc.trklt64[iLayer].getDetector(), trackqc.trackProp[iLayer].getY() - trackqc.trackletY[iLayer]);
+        mDeltaZDet->Fill(trackqc.trklt64[iLayer].getDetector(), trackqc.trackProp[iLayer].getZ() - trackqc.trackletZ[iLayer]);
+        mDeltaYvsSphi->Fill(trackqc.trackProp[iLayer].getSnp(), trackqc.trackProp[iLayer].getY() - trackqc.trackletY[iLayer]);
+        mDeltaYinEtaPerLayer[iLayer]->Fill(trackqc.trackProp[iLayer].getEta(), trackqc.trackProp[iLayer].getY() - trackqc.trackletY[iLayer]);
+        mDeltaYinPhiPerLayer[iLayer]->Fill(trackqc.trackProp[iLayer].getPhiPos(), trackqc.trackProp[iLayer].getY() - trackqc.trackletY[iLayer]);
+        mTrackletDef->Fill(trackqc.trackProp[iLayer].getSnp(), trackqc.trkltCalib[iLayer].getDy());
+      } // end of loop over layers
+    }   // end of loop over tracks
+  }
+}
+
+void TrackingTask::setEfficiency(TEfficiency* eff, TH1* hNum, TH1* hDen)
+{
+  if (!eff || !hNum || !hDen) {
+    ILOG(Debug, Devel) << "Something went wrong when defining the efficiency " << eff->GetName() << " from " << hNum->GetName() << " and " << hDen->GetName() << ENDM;
+  }
+  eff->SetTotalHistogram(*hDen, "f");
+  eff->SetPassedHistogram(*hNum, "f");
 }
 
 void TrackingTask::endOfCycle()
@@ -157,14 +210,26 @@ void TrackingTask::reset()
   mNtracklets->Reset();
   mTrackEta->Reset();
   mTrackPhi->Reset();
+  mTrackEtaPhi->Reset();
   mTrackPt->Reset();
+  mTrackPtTPCITS->Reset();
+  mTrackEtaTPCITS->Reset();
+  mTrackPhiTPCITS->Reset();
   mTrackChi2->Reset();
-  mDeltaY->Reset();
-  mDeltaZ->Reset();
-  mDeltaYDet->Reset();
-  mDeltaZDet->Reset();
-  mDeltaYvsSphi->Reset();
-  mTrackletDef->Reset();
+  if (mDetailedTrackQC) {
+    mDeltaY->Reset();
+    mDeltaZ->Reset();
+    mDeltaYDet->Reset();
+    mDeltaZDet->Reset();
+    mDeltaYvsSphi->Reset();
+    mTrackletDef->Reset();
+    for (auto h : mDeltaYinEtaPerLayer) {
+      h->Reset();
+    }
+    for (auto h : mDeltaYinPhiPerLayer) {
+      h->Reset();
+    }
+  }
   for (auto h : mTrackletsEtaPhi) {
     h->Reset();
   }
@@ -172,12 +237,6 @@ void TrackingTask::reset()
     for (auto hh : h) {
       hh->Reset();
     }
-  }
-  for (auto h : mDeltaYinEtaPerLayer) {
-    h->Reset();
-  }
-  for (auto h : mDeltaYinPhiPerLayer) {
-    h->Reset();
   }
 }
 
@@ -187,7 +246,7 @@ void TrackingTask::buildHistograms()
   axisConfig(mNtracks, "# of tracks", "", "", 1, 1.0, 1.3);
   publishObject(mNtracks);
 
-  mNtracklets = new TH1D("Ntracklets", "Number of Tracklets per track", 6, 0.0, 6.0);
+  mNtracklets = new TH1D("Ntracklets", "Number of Tracklets per Track", 7, -0.5, 6.5);
   axisConfig(mNtracklets, "# of tracklets", "", "", 1, 1.0, 1.1);
   publishObject(mNtracklets);
 
@@ -199,56 +258,84 @@ void TrackingTask::buildHistograms()
   axisConfig(mTrackPhi, "#phi", "Counts", "", 1, 1.0, 1.1);
   publishObject(mTrackPhi);
 
+  mTrackEtaPhi = new TH2D("TrackEtaPhi", "Number of TRD matched tracks;track #eta;track #phi;counts", 100, -1., 1., 180, 0, TMath::TwoPi());
+  publishObject(mTrackEtaPhi, "colz");
+
   mTrackPt = new TH1D("TrackPt", "p_{T} Distribution", 100, 0.0, 10.0);
-  axisConfig(mTrackPt, "p_{T}", "Counts", "", 1, 1.0, 1.1);
+  axisConfig(mTrackPt, "p_{T} (GeV)", "Counts", "", 1, 1.0, 1.1);
   publishObject(mTrackPt, "", "logx");
+
+  mTrackPtTPCITS = new TH1D("TrackPtTPCITS", "p_{T} Distribution for ITS-TPC tracks", 100, 0.0, 10.0);
+  axisConfig(mTrackPtTPCITS, "p_{T} (GeV)", "Counts", "", 1, 1.0, 1.1);
+  publishObject(mTrackPtTPCITS, "", "logx");
+
+  mTrackEtaTPCITS = new TH1D("TrackEtaTPCITS", "Eta Distribution for ITS-TPC tracks", 20, -1.0, 1.0);
+  axisConfig(mTrackEtaTPCITS, "#eta", "Counts", "", 1, 1.0, 1.1);
+  publishObject(mTrackEtaTPCITS);
+
+  mTrackPhiTPCITS = new TH1D("TrackPhiTPCITS", "Phi Distribution for ITS-TPC tracks", 60, 0, TMath::TwoPi());
+  axisConfig(mTrackPhiTPCITS, "#phi", "Counts", "", 1, 1.0, 1.1);
+  publishObject(mTrackPhiTPCITS);
+
+  mEfficiencyPt = new TEfficiency("EfficiencyPt", "Efficiency of matched tracks in p_{T}", 100, 0.0, 10.0);
+  publishObject(mEfficiencyPt);
+
+  mEfficiencyEta = new TEfficiency("EfficiencyEta", "Efficiency of matched tracks in #eta", 20, -1.0, 1.0);
+  publishObject(mEfficiencyEta);
+
+  mEfficiencyPhi = new TEfficiency("EfficiencyPhi", "Efficiency of matched tracks in #phi", 60, 0, TMath::TwoPi());
+  publishObject(mEfficiencyPhi);
 
   mTrackChi2 = new TH1D("TrackChi2", "Reduced Chi2Distribution", 100, 0.0, 10.0);
   axisConfig(mTrackChi2, "reduced #chi^{2}", "Counts", "", 1, 1.0, 1.1);
   publishObject(mTrackChi2);
 
-  mDeltaY = new TH1D("DeltaY", "Residuals in Y", 100, -10.0, 10.0);
-  axisConfig(mDeltaY, "track Y - tracklet Y (cm)", "Counts", "", 1, 1.0, 1.1);
-  publishObject(mDeltaY);
+  if (mDetailedTrackQC) {
+    mDeltaY = new TH1D("DeltaY", "Residuals in Y", 100, -10.0, 10.0);
+    axisConfig(mDeltaY, "track Y - tracklet Y (cm)", "Counts", "", 1, 1.0, 1.1);
+    publishObject(mDeltaY);
 
-  mDeltaZ = new TH1D("DeltaZ", "Residuals in Z", 100, -25.0, 25.0);
-  axisConfig(mDeltaZ, "track Z - tracklet Z (cm)", "Counts", "", 1, 1.0, 1.1);
-  publishObject(mDeltaZ);
+    mDeltaZ = new TH1D("DeltaZ", "Residuals in Z", 100, -25.0, 25.0);
+    axisConfig(mDeltaZ, "track Z - tracklet Z (cm)", "Counts", "", 1, 1.0, 1.1);
+    publishObject(mDeltaZ);
 
-  mDeltaYDet = new TH2D("DeltaYvsDet", "YResiduals per chamber", 540, -0.5, 539.5, 50, -10, 10);
-  axisConfig(mDeltaYDet, "chamber number", "track Y - tracklet Y (cm)", "Counts", 0, 1.0, 1.1);
-  publishObject(mDeltaYDet, "colz", "logz");
+    mDeltaYDet = new TH2D("DeltaYvsDet", "YResiduals per chamber", 540, -0.5, 539.5, 50, -10, 10);
+    axisConfig(mDeltaYDet, "chamber number", "track Y - tracklet Y (cm)", "Counts", 0, 1.0, 1.1);
+    publishObject(mDeltaYDet, "colz", "logz");
 
-  mDeltaZDet = new TH2D("DeltaZvsDet", "ZResiduals per chamber", 540, -0.5, 539.5, 50, -25, 25);
-  axisConfig(mDeltaZDet, "chamber number", "track Z - tracklet Z (cm)", "Counts", 0, 1.0, 1.1);
-  publishObject(mDeltaZDet, "colz", "logz");
+    mDeltaZDet = new TH2D("DeltaZvsDet", "ZResiduals per chamber", 540, -0.5, 539.5, 50, -25, 25);
+    axisConfig(mDeltaZDet, "chamber number", "track Z - tracklet Z (cm)", "Counts", 0, 1.0, 1.1);
+    publishObject(mDeltaZDet, "colz", "logz");
 
-  mDeltaYvsSphi = new TH2D("DeltaYsnphi", "YResiduals vs Track sin(#phi)", 50, -0.4, 0.4, 50, -10, 10);
-  axisConfig(mDeltaYvsSphi, "track #it{sin(#phi)}", "track Y - tracklet Y (cm)", "Counts", 0, 1.0, 1.1);
-  publishObject(mDeltaYvsSphi, "colz", "logz");
+    mDeltaYvsSphi = new TH2D("DeltaYsnphi", "YResiduals vs Track sin(#phi)", 50, -0.4, 0.4, 50, -10, 10);
+    axisConfig(mDeltaYvsSphi, "track #it{sin(#phi)}", "track Y - tracklet Y (cm)", "Counts", 0, 1.0, 1.1);
+    publishObject(mDeltaYvsSphi, "colz", "logz");
 
-  mTrackletDef = new TH2D("TrackletDeflection", "Tracklet slope vs Track sin(#phi)", 100, -0.5, 0.5, 100, -1.5, 1.5);
-  axisConfig(mTrackletDef, "track #it{sin(#phi)}", "tracklet D_{y}", "Counts", 0, 1.0, 1.1);
-  publishObject(mTrackletDef, "colz", "logz");
+    mTrackletDef = new TH2D("TrackletDeflection", "Tracklet slope vs Track sin(#phi)", 100, -0.5, 0.5, 100, -1.5, 1.5);
+    axisConfig(mTrackletDef, "track #it{sin(#phi)}", "tracklet D_{y}", "Counts", 0, 1.0, 1.1);
+    publishObject(mTrackletDef, "colz", "logz");
+  }
 
   for (int i = 0; i < NLAYER; ++i) {
     for (int j = 0; j < 2; ++j) {
-      mTracksEtaPhiPerLayer[j][i] = new TH2D(Form("EtaPhi%sTrackPerLayer/layer%i", chrg[j].Data(), i), Form("EtaPhi for %s tracks in layer %i", chrg[j].Data(), i), 100, -0.856, 0.856, 180, 0, TMath::TwoPi());
-      axisConfig(mTracksEtaPhiPerLayer[j][i], "#eta", "#phi", "Counts", 0, 1.0, 1.1);
-      drawLayers(mTracksEtaPhiPerLayer[j][i]);
-      publishObject(mTracksEtaPhiPerLayer[j][i], "colz", "");
+      mTracksEtaPhiPerLayer[i][j] = new TH2D(Form("EtaPhi%sTrackPerLayer/layer%i", mChargeLabel[j].Data(), i), Form("EtaPhi for %s tracks in layer %i", mChargeLabel[j].Data(), i), 100, -0.856, 0.856, 180, 0, TMath::TwoPi());
+      axisConfig(mTracksEtaPhiPerLayer[i][j], "#eta", "#phi", "Counts", 0, 1.0, 1.1);
+      drawLayers(mTracksEtaPhiPerLayer[i][j]);
+      publishObject(mTracksEtaPhiPerLayer[i][j], "colz", "");
     }
-    mDeltaYinEtaPerLayer[i] = new TH2D(Form("YResinEtaPerLayer/layer%i", i), Form("YResiduals in eta for layer %i", i), 100, -0.856, 0.856, 100, -10, 10);
-    axisConfig(mDeltaYinEtaPerLayer[i], "#eta", "track Y - tracklet Y (cm)", "Counts", 0, 1.0, 1.1);
-    publishObject(mDeltaYinEtaPerLayer[i], "colz", "logz");
+    if (mDetailedTrackQC) {
+      mDeltaYinEtaPerLayer[i] = new TH2D(Form("YResinEtaPerLayer/layer%i", i), Form("YResiduals in eta for layer %i", i), 100, -0.856, 0.856, 100, -10, 10);
+      axisConfig(mDeltaYinEtaPerLayer[i], "#eta", "track Y - tracklet Y (cm)", "Counts", 0, 1.0, 1.1);
+      publishObject(mDeltaYinEtaPerLayer[i], "colz", "logz");
 
-    mDeltaYinPhiPerLayer[i] = new TH2D(Form("YResinPhiPerLayer/layer%i", i), Form("YResiduals in phi for layer %i", i), 180, 0, TMath::TwoPi(), 100, -10, 10);
-    axisConfig(mDeltaYinPhiPerLayer[i], "#phi", "track Y - tracklet Y (cm)", "Counts", 0, 1.0, 1.1);
-    publishObject(mDeltaYinPhiPerLayer[i], "colz", "logz");
+      mDeltaYinPhiPerLayer[i] = new TH2D(Form("YResinPhiPerLayer/layer%i", i), Form("YResiduals in phi for layer %i", i), 180, 0, TMath::TwoPi(), 100, -10, 10);
+      axisConfig(mDeltaYinPhiPerLayer[i], "#phi", "track Y - tracklet Y (cm)", "Counts", 0, 1.0, 1.1);
+      publishObject(mDeltaYinPhiPerLayer[i], "colz", "logz");
+    }
   }
-  for (int i = 0; i < 2; ++i) {
-    mTrackletsEtaPhi[i] = new TProfile2D(Form("EtaPhiTracklets/%sTracks", chrg[i].Data()), Form("EtaPhi for %s tracks (tracklets)", chrg[i].Data()), 100, -0.856, 0.856, 180, 0, TMath::TwoPi(), 0, 6);
-    axisConfig(mTrackletsEtaPhi[i], "#eta", "#phi", "av. # of tracklets per track", 0, 1.0, 1.1);
+  for (int i = 0; i < 3; ++i) {
+    mTrackletsEtaPhi[i] = new TProfile2D(Form("EtaPhiTracklets/%sTracks", mChargeLabel[i].Data()), Form("Av. # of tracklets for %s TRD tracks", mChargeLabel[i].Data()), 100, -0.856, 0.856, 180, 0, TMath::TwoPi(), 0, 6);
+    axisConfig(mTrackletsEtaPhi[i], "track #eta", "track #phi", "<N_{tracklets}>", 0, 1.0, 1.1);
     drawLayers(mTrackletsEtaPhi[i]);
     publishObject(mTrackletsEtaPhi[i], "colz", "");
   }

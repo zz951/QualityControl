@@ -22,6 +22,7 @@
 
 #include <Framework/DataSpecUtils.h>
 #include <Configuration/ConfigurationFactory.h>
+#include "QualityControl/InfrastructureSpecReader.h"
 
 using namespace o2::quality_control::core;
 using namespace o2::framework;
@@ -84,6 +85,21 @@ TEST_CASE("qc_factory_local_test")
   }
 }
 
+TEST_CASE("throwIfAggNamesClashCheckNames")
+{
+  std::string configFilePath = std::string("json://") + getTestDataDirectory() + "testSharedConfig.json";
+  auto configInterface = ConfigurationFactory::getConfiguration(configFilePath);
+  auto configTree = configInterface->getRecursive();
+  auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configTree, WorkflowType::Standalone);
+  CHECK_NOTHROW(InfrastructureGenerator::throwIfAggNamesClashCheckNames(infrastructureSpec)); // should not throw
+
+  configFilePath = std::string("json://") + getTestDataDirectory() + "testThrowNameClash.json";
+  configInterface = ConfigurationFactory::getConfiguration(configFilePath);
+  configTree = configInterface->getRecursive();
+  infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configTree, WorkflowType::Standalone);
+  CHECK_THROWS(InfrastructureGenerator::throwIfAggNamesClashCheckNames(infrastructureSpec)); // should throw
+}
+
 TEST_CASE("qc_factory_remote_test")
 {
   std::string configFilePath = std::string("json://") + getTestDataDirectory() + "testSharedConfig.json";
@@ -94,7 +110,7 @@ TEST_CASE("qc_factory_remote_test")
   // the infrastructure should consist of two proxies, mergers and checkers for 'skeletonTask' and 'recoTask'
   // (their taskRunner are declared to be local) and also taskRunner and checker for the 'abcTask' and 'xyzTask'.
   // Post processing adds one process for the task and one for checks.
-  REQUIRE(workflow.size() == 14);
+  REQUIRE(workflow.size() == 15);
 
   auto tcpclustProxy = std::find_if(
     workflow.begin(), workflow.end(),
@@ -128,7 +144,7 @@ TEST_CASE("qc_factory_remote_test")
     [](const DataProcessorSpec& d) {
       return d.name.find("TST-MERGER-skeletonTask") != std::string::npos &&
              d.inputs.size() == 3 &&
-             d.outputs.size() == 1 && DataSpecUtils::getOptionalSubSpec(d.outputs[0]).value_or(-1) == 0;
+             d.outputs.size() == 2 && DataSpecUtils::getOptionalSubSpec(d.outputs[0]).value_or(-1) == 0;
     });
   CHECK(mergerSkeletonTask != workflow.end());
 
@@ -173,7 +189,7 @@ TEST_CASE("qc_factory_remote_test")
       return d.name.find("qc-check") != std::string::npos &&
              d.inputs.size() == 1;
     });
-  REQUIRE(checkRunnerCount == 5);
+  REQUIRE(checkRunnerCount == 6);
 
   auto postprocessingTask = std::find_if(
     workflow.begin(), workflow.end(),
@@ -359,14 +375,14 @@ TEST_CASE("qc_infrastructure_remote_batch_test")
   auto configTree = configInterface->getRecursive();
   auto workflow = InfrastructureGenerator::generateRemoteBatchInfrastructure(configTree, "file.root");
 
-  REQUIRE(workflow.size() == 8);
+  REQUIRE(workflow.size() == 9);
 
   auto fileReader = std::find_if(
     workflow.begin(), workflow.end(),
     [](const DataProcessorSpec& d) {
       return d.name == "qc-root-file-source" &&
              d.inputs.size() == 0 &&
-             d.outputs.size() == 4;
+             d.outputs.size() == 5;
     });
   CHECK(fileReader != workflow.end());
 
@@ -376,7 +392,7 @@ TEST_CASE("qc_infrastructure_remote_batch_test")
       return d.name.find("qc-check") != std::string::npos &&
              d.inputs.size() == 1;
     });
-  REQUIRE(checkRunnerCount == 5);
+  REQUIRE(checkRunnerCount == 6);
 
   auto postprocessingTask = std::find_if(
     workflow.begin(), workflow.end(),

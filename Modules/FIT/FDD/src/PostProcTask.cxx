@@ -19,6 +19,10 @@
 #include "CommonConstants/LHCConstants.h"
 #include "DataFormatsParameters/GRPLHCIFData.h"
 
+#include "FITCommon/HelperHist.h"
+#include "FITCommon/HelperCommon.h"
+#include "FITCommon/HelperFIT.h"
+
 #include <TH1F.h>
 #include <TH2F.h>
 #include <TCanvas.h>
@@ -27,6 +31,7 @@
 #include <TProfile.h>
 
 using namespace o2::quality_control::postprocessing;
+using namespace o2::quality_control_modules::fit;
 
 namespace o2::quality_control_modules::fdd
 {
@@ -42,6 +47,7 @@ void PostProcTask::configure(const boost::property_tree::ptree& config)
   mCcdbUrl = config.get_child("qc.config.conditionDB.url").get_value<std::string>();
 
   const char* configPath = Form("qc.postprocessing.%s", getID().c_str());
+  const char* configCustom = Form("%s.custom", configPath);
   ILOG(Info, Support) << "configPath = " << configPath << ENDM;
 
   auto node = config.get_child_optional(Form("%s.custom.pathGrpLhcIf", configPath));
@@ -96,6 +102,10 @@ void PostProcTask::configure(const boost::property_tree::ptree& config)
     mTimestampSourceLhcIf = "trigger";
     ILOG(Debug, Support) << "configure() : using default timestampSourceLhcIf = \"" << mTimestampSourceLhcIf << "\"" << ENDM;
   }
+  mLowTimeThreshold = helper::getConfigFromPropertyTree<int>(config, Form("%s.lowTimeThreshold", configCustom), -192);
+  mUpTimeThreshold = helper::getConfigFromPropertyTree<int>(config, Form("%s.upTimeThreshold", configCustom), 192);
+  mLowAmpSat = helper::getConfigFromPropertyTree<double>(config, Form("%s.lowAmpSat", configCustom), 1.);
+  mUpAmpSat = helper::getConfigFromPropertyTree<double>(config, Form("%s.upAmpSat", configCustom), 3600.);
 }
 
 void PostProcTask::initialize(Trigger, framework::ServiceRegistryRef services)
@@ -175,20 +185,51 @@ void PostProcTask::initialize(Trigger, framework::ServiceRegistryRef services)
       getObjectsManager()->startPublishing(pairHistBC.first->second);
     }
   }
+  const auto& lut = o2::fdd::SingleLUT::Instance().getVecMetadataFEE();
+  auto lutSorted = lut;
+  std::sort(lutSorted.begin(), lutSorted.end(), [](const auto& first, const auto& second) { return first.mModuleName < second.mModuleName; });
+  uint8_t binPos{ 0 };
+  for (const auto& lutEntry : lutSorted) {
+    const auto& moduleName = lutEntry.mModuleName;
+    const auto& moduleType = lutEntry.mModuleType;
+    const auto& strChID = lutEntry.mChannelID;
+    const auto& pairIt = mMapFEE2hash.insert({ moduleName, binPos });
+    if (pairIt.second) {
+      binPos++;
+    }
+    if (std::regex_match(strChID, std::regex("[[\\d]{1,3}"))) {
+      int chID = std::stoi(strChID);
+      if (chID < sNCHANNELS_PM) {
+        mChID2PMhash[chID] = mMapFEE2hash[moduleName];
+      } else {
+        ILOG(Error, Support) << "Incorrect LUT entry: chID " << strChID << " | " << moduleName << ENDM;
+      }
+    } else if (moduleType != "TCM") {
+      ILOG(Error, Support) << "Non-TCM module w/o numerical chID: chID " << strChID << " | " << moduleName << ENDM;
+    } else if (moduleType == "TCM") {
+      uint8_t mTCMhash = mMapFEE2hash[moduleName];
+    }
+  }
+  mHistBcFeeOutOfBunchCollForVtxTrg = std::make_unique<TH2F>("OutOfBunchColl_BCvsFeeModulesForVtxTrg", "BC vs FEE Modules for out-of-bunch collisions for Vertex trg;BC;FEE Modules", sBCperOrbit, 0, sBCperOrbit, mMapFEE2hash.size(), 0, mMapFEE2hash.size());
+  mHistBcPatternFee = std::make_unique<TH2F>("bcPatternForFeeModules", "BC pattern", sBCperOrbit, 0, sBCperOrbit, mMapFEE2hash.size(), 0, mMapFEE2hash.size());
+  for (const auto& entry : mMapFEE2hash) {
+    // ILOG(Warning, Support) << "============= mMapFEE2hash.second + 1: " << entry.second + 1
+    //                        << " mMapFEE2hash.first.c_str(): " << entry.first.c_str() << ENDM;
+
+    mHistBcPatternFee->GetYaxis()->SetBinLabel(entry.second + 1, entry.first.c_str());
+    mHistBcFeeOutOfBunchCollForVtxTrg->GetYaxis()->SetBinLabel(entry.second + 1, entry.first.c_str());
+  }
+
+  getObjectsManager()->startPublishing(mHistBcFeeOutOfBunchCollForVtxTrg.get());
+  getObjectsManager()->setDefaultDrawOptions(mHistBcFeeOutOfBunchCollForVtxTrg.get(), "COLZ");
+  getObjectsManager()->startPublishing(mHistBcPatternFee.get());
+  getObjectsManager()->setDefaultDrawOptions(mHistBcPatternFee.get(), "COLZ");
+
   getObjectsManager()->startPublishing(mHistTriggers.get());
   getObjectsManager()->startPublishing(mHistBcPattern.get());
   getObjectsManager()->setDefaultDrawOptions(mHistBcPattern.get(), "COLZ");
   getObjectsManager()->startPublishing(mHistBcTrgOutOfBunchColl.get());
   getObjectsManager()->setDefaultDrawOptions(mHistBcTrgOutOfBunchColl.get(), "COLZ");
-
-  mHistTimeUpperFraction = std::make_unique<TH1F>("TimeUpperFraction", "Fraction of events under time window(-+190 channels);ChID;Fraction", sNCHANNELS_PM, 0, sNCHANNELS_PM);
-  getObjectsManager()->startPublishing(mHistTimeUpperFraction.get());
-
-  mHistTimeLowerFraction = std::make_unique<TH1F>("TimeLowerFraction", "Fraction of events below time window(-+190 channels);ChID;Fraction", sNCHANNELS_PM, 0, sNCHANNELS_PM);
-  getObjectsManager()->startPublishing(mHistTimeLowerFraction.get());
-
-  mHistTimeInWindow = std::make_unique<TH1F>("TimeInWindowFraction", "Fraction of events within time window(-+190 channels);ChID;Fraction", sNCHANNELS_PM, 0, sNCHANNELS_PM);
-  getObjectsManager()->startPublishing(mHistTimeInWindow.get());
 
   getObjectsManager()->startPublishing(mRateOrA.get());
   getObjectsManager()->startPublishing(mRateOrC.get());
@@ -205,6 +246,12 @@ void PostProcTask::initialize(Trigger, framework::ServiceRegistryRef services)
       obj->SetTitle((string("FDD ") + obj->GetTitle()).c_str());
     }
   }
+
+  mMapBasicTrgBits = HelperTrgFIT::sMapBasicTrgBitsFDD;
+  mHistTrgValidation = helper::registerHist<TH1F>(getObjectsManager(), "", "TrgValidation", "FDD SW + HW only to validated triggers fraction", mMapBasicTrgBits);
+  mHistTimeInWindow = helper::registerHist<TH1F>(getObjectsManager(), "", "TimeInWindowFraction", Form("FDD Fraction of events with CFD in time gate(%i,%i) vs ChannelID;ChannelID;Event fraction with CFD in time gate", mLowTimeThreshold, mUpTimeThreshold), sNCHANNELS_PM, 0, sNCHANNELS_PM);
+  mHistCFDEff = helper::registerHist<TH1F>(getObjectsManager(), "", "CFD_efficiency", "FDD Fraction of events with CFD in ADC gate vs ChannelID;ChannelID;Event fraction with CFD in ADC gate;", sNCHANNELS_PM, 0, sNCHANNELS_PM);
+  mHistAmpSaturation = helper::registerHist<TH1F>(getObjectsManager(), "", "AmpSaturation", Form("FDD Fraction of charge in [%d, %d] ADC;ChannelID;Fraction", static_cast<int>(mLowAmpSat), static_cast<int>(mUpAmpSat)), sNCHANNELS_PM, 0, sNCHANNELS_PM);
 }
 
 void PostProcTask::update(Trigger t, framework::ServiceRegistryRef)
@@ -310,6 +357,17 @@ void PostProcTask::update(Trigger t, framework::ServiceRegistryRef)
   if (!hAmpPerChannel) {
     ILOG(Error) << "MO \"AmpPerChannel\" NOT retrieved!!!"
                 << ENDM;
+  } else {
+    {
+      std::unique_ptr<TH1D> projNom(hAmpPerChannel->ProjectionX("projNom", hAmpPerChannel->GetYaxis()->FindBin(1.0), -1));
+      std::unique_ptr<TH1D> projDen(hAmpPerChannel->ProjectionX("projDen"));
+      mHistCFDEff->Divide(projNom.get(), projDen.get());
+    }
+    {
+      std::unique_ptr<TH1D> projNom(hAmpPerChannel->ProjectionX("projNom", hAmpPerChannel->GetYaxis()->FindBin(mLowAmpSat), hAmpPerChannel->GetYaxis()->FindBin(mUpAmpSat)));
+      std::unique_ptr<TH1D> projDen(hAmpPerChannel->ProjectionX("projDen", hAmpPerChannel->GetYaxis()->FindBin(mLowAmpSat), hAmpPerChannel->GetNbinsY()));
+      mHistAmpSaturation->Divide(projNom.get(), projDen.get());
+    }
   }
   auto mo4 = mDatabase->retrieveMO(mPathDigitQcTask, "TimePerChannel", t.timestamp, t.activity);
   auto hTimePerChannel = mo4 ? dynamic_cast<TH2F*>(mo4->getObject()) : nullptr;
@@ -317,17 +375,9 @@ void PostProcTask::update(Trigger t, framework::ServiceRegistryRef)
     ILOG(Error) << "MO \"TimePerChannel\" NOT retrieved!!!"
                 << ENDM;
   } else {
-    auto projLower = hTimePerChannel->ProjectionX("projLower", 0, hTimePerChannel->GetYaxis()->FindBin(-190.));
-    auto projUpper = hTimePerChannel->ProjectionX("projUpper", hTimePerChannel->GetYaxis()->FindBin(190.), -1);
-    auto projInWindow = hTimePerChannel->ProjectionX("projInWindow", hTimePerChannel->GetYaxis()->FindBin(-190.), hTimePerChannel->GetYaxis()->FindBin(190.));
-    auto projFull = hTimePerChannel->ProjectionX("projFull");
-    mHistTimeUpperFraction->Divide(projUpper, projFull);
-    mHistTimeLowerFraction->Divide(projLower, projFull);
-    mHistTimeInWindow->Divide(projInWindow, projFull);
-    delete projLower;
-    delete projUpper;
-    delete projInWindow;
-    delete projFull;
+    std::unique_ptr<TH1D> projInWindow(hTimePerChannel->ProjectionX("projInWindow", hTimePerChannel->GetYaxis()->FindBin(mLowTimeThreshold), hTimePerChannel->GetYaxis()->FindBin(mUpTimeThreshold)));
+    std::unique_ptr<TH1D> projFull(hTimePerChannel->ProjectionX("projFull"));
+    mHistTimeInWindow->Divide(projInWindow.get(), projFull.get());
   }
 
   if (hAmpPerChannel && hTimePerChannel) {
@@ -406,6 +456,14 @@ void PostProcTask::update(Trigger t, framework::ServiceRegistryRef)
     }
   }
 
+  // Create histogram with bc pattern for FEE modules
+  mHistBcPatternFee->Reset();
+  for (int i = 0; i < sBCperOrbit; i++) {
+    for (int j = 0; j < mMapFEE2hash.size(); j++) {
+      mHistBcPatternFee->SetBinContent(i + 1, j + 1, bcPattern.testBC(i));
+    }
+  }
+
   mHistBcTrgOutOfBunchColl->Reset();
   float vmax = hBcVsTrg->GetBinContent(hBcVsTrg->GetMaximumBin());
   mHistBcTrgOutOfBunchColl->Add(hBcVsTrg, mHistBcPattern.get(), 1, -1 * vmax);
@@ -422,6 +480,41 @@ void PostProcTask::update(Trigger t, framework::ServiceRegistryRef)
     const std::string metadataValue = std::to_string(hBcVsTrg->Integral(1, sBCperOrbit, iBin, iBin));
     getObjectsManager()->getMonitorObject(mHistBcTrgOutOfBunchColl->GetName())->addOrUpdateMetadata(metadataKey, metadataValue);
     ILOG(Info, Support) << metadataKey << ":" << metadataValue << ENDM;
+  }
+
+  auto moTriggersSoftwareVsTCM = mDatabase->retrieveMO(mPathDigitQcTask, "TriggersSoftwareVsTCM", t.timestamp, t.activity);
+  auto hTriggersSoftwareVsTCM = moTriggersSoftwareVsTCM ? dynamic_cast<TH2F*>(moTriggersSoftwareVsTCM->getObject()) : nullptr;
+  if (hTriggersSoftwareVsTCM != nullptr) {
+    std::unique_ptr<TH1D> projOnlyHWorSW(hTriggersSoftwareVsTCM->ProjectionX("projOnlyHWorSW", 1, 2));
+    std::unique_ptr<TH1D> projValidatedSWandHW(hTriggersSoftwareVsTCM->ProjectionX("projValidatedSWandHW", 4, 4));
+    projOnlyHWorSW->LabelsDeflate();
+    projValidatedSWandHW->LabelsDeflate();
+    mHistTrgValidation->Divide(projOnlyHWorSW.get(), projValidatedSWandHW.get());
+  }
+  // Download histogram BCvsFEEmodulesForVtxTrg from database
+  auto moBcVsFeeModulesForVtxTrg = mDatabase->retrieveMO(mPathDigitQcTask, "BCvsFEEmodulesForVtxTrg", t.timestamp, t.activity);
+  auto hBcVsFeeModulesForVtxTrg = moBcVsFeeModulesForVtxTrg ? dynamic_cast<TH2F*>(moBcVsFeeModulesForVtxTrg->getObject()) : nullptr;
+  if (!hBcVsFeeModulesForVtxTrg) {
+    ILOG(Error, Support) << "MO \"BCvsFEEmodulesForVtxTrg\" NOT retrieved!!!" << ENDM;
+    return;
+  } else {
+    mHistBcFeeOutOfBunchCollForVtxTrg->Reset();
+    float vmax = hBcVsFeeModulesForVtxTrg->GetBinContent(hBcVsFeeModulesForVtxTrg->GetMaximumBin());
+    mHistBcFeeOutOfBunchCollForVtxTrg->Add(hBcVsFeeModulesForVtxTrg, mHistBcPatternFee.get(), 1, -1 * vmax);
+    for (int i = 0; i < sBCperOrbit; i++) {
+      for (int j = 0; j < mMapFEE2hash.size(); j++) {
+        if (mHistBcFeeOutOfBunchCollForVtxTrg->GetBinContent(i + 1, j + 1) < 0) {
+          mHistBcFeeOutOfBunchCollForVtxTrg->SetBinContent(i + 1, j + 1, 0);
+        }
+      }
+    }
+    // Add metadata to histogram OutOfBunchColl_BCvsFeeModulesForOrATrg
+    mHistBcFeeOutOfBunchCollForVtxTrg->SetEntries(mHistBcFeeOutOfBunchCollForVtxTrg->Integral(1, sBCperOrbit, 1, mMapFEE2hash.size()));
+    for (int iBin = 1; iBin <= mMapFEE2hash.size(); iBin++) {
+      const std::string metadataKey = std::to_string(iBin);
+      const std::string metadataValue = std::to_string(hBcVsFeeModulesForVtxTrg->Integral(1, sBCperOrbit, iBin, iBin));
+      getObjectsManager()->getMonitorObject(mHistBcFeeOutOfBunchCollForVtxTrg->GetName())->addOrUpdateMetadata(metadataKey, metadataValue);
+    }
   }
 }
 

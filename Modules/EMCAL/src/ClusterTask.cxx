@@ -126,39 +126,15 @@ void ClusterTask::initialize(o2::framework::InitContext& /*ctx*/)
   }
 
   configureBindings();
+  configureTaskParameters();
 
-  if (hasConfigValue("useInternalClusterizer")) {
-    mInternalClusterizer = get_bool(getConfigValueLower("useInternalClusterizer"));
-    if (mInternalClusterizer) {
-      ILOG(Info, Support) << "Enabling internal clusterizer . . . " << ENDM;
-      // Check whether we want to run the calibration before (only in case we run the internal clusterizer)
-      if (hasConfigValue("calibrateCells")) {
-        mCalibrate = get_bool(getConfigValueLower("calibrateCells"));
-        if (mCalibrate) {
-          ILOG(Info, Support) << "Calibrate cells before clusterization" << ENDM;
-        }
-      }
-
-      /// Configure clusterizer settings
-      configureClusterizerSettings();
-    }
+  if (mTaskParameters.mInternalClusterizer) {
+    /// Configure clusterizer settings
+    configureClusterizerSettings();
   }
 
-  if (hasConfigValue("fillControlHistograms")) {
-    mFillControlHistograms = get_bool(getConfigValueLower("fillControlHistograms"));
-    if (mFillControlHistograms) {
-      ILOG(Info, Support) << "Filling cell-level control histograms" << ENDM;
-    }
-  }
-
-  if (hasConfigValue("hasInvMassMesons")) {
-    mFillInvMassMeson = get_bool(getConfigValueLower("hasInvMassMesons"));
-  }
-  if (mFillInvMassMeson) {
-    ILOG(Info, Support) << "Invariant mass histograms for Meson candidates enabled" << ENDM;
+  if (mTaskParameters.mFillInvMassMeson) {
     configureMesonSelection();
-  } else {
-    ILOG(Info, Support) << "Invariant mass histograms for Meson candidates disabled" << ENDM;
   }
 
   mEventHandler = std::make_unique<o2::emcal::EventHandler<o2::emcal::Cell>>();
@@ -175,7 +151,7 @@ void ClusterTask::initialize(o2::framework::InitContext& /*ctx*/)
   mHistNclustPerTF = new TH1F("NclustPerTF", "Number of clusters per time frame; N_{Cluster}/TF; Yield", 2000, 0.0, 200000.0);
   getObjectsManager()->startPublishing(mHistNclustPerTF);
 
-  mHistNclustPerEvt = new TH1F("NclustPerEvt", "Number of clusters per event; N_{Cluster}/Event; Yield", 200, 0.0, 200.0);
+  mHistNclustPerEvt = new TH1F("NclustPerEvt", "Number of clusters per event; N_{Cluster}/Event; Yield", mTaskParameters.mMultiplicityRange, 0.0, mTaskParameters.mMultiplicityRange);
   getObjectsManager()->startPublishing(mHistNclustPerEvt);
 
   mHistClustEtaPhi = new TH2F("ClustEtaPhi", "Cluster #eta and #phi distribution; #eta; #phi", 100, -1.0, 1.0, 100, 0.0, 2 * TMath::Pi());
@@ -187,19 +163,19 @@ void ClusterTask::initialize(o2::framework::InitContext& /*ctx*/)
   mHistNclustPerTFSelected = new TH1F("NclustPerTFSel", "Number of selected clusters per time frame; N_{Cluster}/TF; yield", 2000, 0.0, 200000.0);
   getObjectsManager()->startPublishing(mHistNclustPerTFSelected);
 
-  mHistNclustPerEvtSelected = new TH1F("NclustPerEvtSel", "Number of clusters per event; N_{Cluster}/Event; yield", 200, 0.0, 200.0);
+  mHistNclustPerEvtSelected = new TH1F("NclustPerEvtSel", "Number of clusters per event; N_{Cluster}/Event; yield", mTaskParameters.mMultiplicityRange, 0.0, mTaskParameters.mMultiplicityRange);
   getObjectsManager()->startPublishing(mHistNclustPerEvtSelected);
 
   mHistNclustSupermodule = new TH1D("NClusterPerSupermodule", "Number of clusters per supermodule; Supermodule ID; Number of clusters", 20, -0.5, 19.5);
   getObjectsManager()->startPublishing(mHistNclustSupermodule);
 
-  mHistNClustPerEventSupermodule = new TH2D("NClustersPerEventSupermodule", "Number of clusters per event per supermodule; Number of cluster / event; Supermodule ID", 200, 0., 200., 20., -0.5, 19.5);
+  mHistNClustPerEventSupermodule = new TH2D("NClustersPerEventSupermodule", "Number of clusters per event per supermodule; Number of cluster / event; Supermodule ID", mTaskParameters.mMultiplicityRange, 0., mTaskParameters.mMultiplicityRange, 20., -0.5, 19.5);
   getObjectsManager()->startPublishing(mHistNClustPerEventSupermodule);
 
   //////////////////////////////////////////////////////////////
   // Control histograms (optional)                            //
   //////////////////////////////////////////////////////////////
-  if (mFillControlHistograms) {
+  if (mTaskParameters.mFillControlHistograms) {
     mHistCellEnergyTimeUsed = new TH2D("CellEnergyTimeUsedAll", "Cell energy vs time (all cells for clustering); E_{cell} (GeV); t_{cell} (ns)", 500, 0, 50, 1800, -900, 900);
     getObjectsManager()->startPublishing(mHistCellEnergyTimeUsed);
     mHistCellEnergyTimePhys = new TH2D("CellEnergyTimeUsedPhys", "Cell energy vs time (all cells for clustering, phys events); E_{cell} (GeV); t_{cell} (ns)", 500, 0, 50, 1800, -900, 900);
@@ -299,7 +275,7 @@ void ClusterTask::initialize(o2::framework::InitContext& /*ctx*/)
   // Meson histograms                                         //
   //////////////////////////////////////////////////////////////
 
-  if (mFillInvMassMeson) {
+  if (mTaskParameters.mFillInvMassMeson) {
     mHistMassDiphoton_EMCAL = new TH1D("InvMassDiphoton_EMCAL", "Diphoton invariant mass for pairs in EMCAL; m_{#gamma#gamma} (GeV/c^{2}); Number of candidates", 400, 0., 0.8);
     getObjectsManager()->startPublishing(mHistMassDiphoton_EMCAL);
 
@@ -324,14 +300,14 @@ void ClusterTask::startOfCycle()
 {
   ILOG(Debug, Devel) << "startOfCycle" << ENDM;
 
-  if (!o2::base::GeometryManager::isGeometryLoaded()) {
-    ILOG(Info, Support) << "Loading geometry" << ENDM;
-    TaskInterface::retrieveConditionAny<TObject>("GLO/Config/Geometry");
-    ILOG(Info, Support) << "Geometry loaded" << ENDM;
-  }
+  // if (!o2::base::GeometryManager::isGeometryLoaded()) {
+  //   ILOG(Info, Support) << "Loading geometry" << ENDM;
+  //   TaskInterface::retrieveConditionAny<TObject>("GLO/Config/Geometry");
+  //   ILOG(Info, Support) << "Geometry loaded" << ENDM;
+  // }
 
   // Loading EMCAL calibration objects
-  if (mCalibrate) {
+  if (mTaskParameters.mInternalClusterizer && mTaskParameters.mCalibrate) {
     std::map<std::string, std::string> metadata;
     mBadChannelMap = retrieveConditionAny<o2::emcal::BadChannelMap>(o2::emcal::CalibDB::getCDBPathBadChannelMap(), metadata);
     if (!mBadChannelMap) {
@@ -352,10 +328,18 @@ void ClusterTask::startOfCycle()
 
 void ClusterTask::monitorData(o2::framework::ProcessingContext& ctx)
 {
+  if (!o2::base::GeometryManager::isGeometryLoaded()) {
+    static bool displayGeometryError = true;
+    if (displayGeometryError) {
+      ILOG(Error, Support) << "Cluster QC needs access to the Geometry - please initialize the GRPGeomHelper in your task configuration" << ENDM;
+      displayGeometryError = false;
+    }
+    return;
+  }
   auto cell = ctx.inputs().get<gsl::span<o2::emcal::Cell>>(mTaskInputBindings.mCellBinding.data());
   auto cellTR = ctx.inputs().get<gsl::span<o2::emcal::TriggerRecord>>(mTaskInputBindings.mCellTriggerRecordBinding.data());
 
-  if (mInternalClusterizer) {
+  if (mTaskParameters.mInternalClusterizer) {
     std::vector<o2::emcal::Cluster> cluster;
     std::vector<int> cellIndex;
     std::vector<o2::emcal::TriggerRecord> clusterTR, cellIndexTR;
@@ -365,7 +349,7 @@ void ClusterTask::monitorData(o2::framework::ProcessingContext& ctx)
     std::vector<o2::emcal::TriggerRecord> calibratedTriggerRecords;
     gsl::span<const o2::emcal::Cell> inputcells;
     gsl::span<const o2::emcal::TriggerRecord> inputTriggerRecords;
-    if (mCalibrate) {
+    if (mTaskParameters.mCalibrate) {
       // build recalibrated cell collection;
       ILOG(Debug, Support) << "Calibrate cells" << ENDM;
       getCalibratedCells(cell, cellTR, calibratedCells, calibratedTriggerRecords);
@@ -486,7 +470,7 @@ void ClusterTask::analyseTimeframe(const gsl::span<const o2::emcal::Cell>& cells
           continue;
         }
         auto clsTypeEMC = fillClusterHistogramsPhysics(analysisCluster);
-        if (mFillInvMassMeson && mMesonClusterCuts.isSelected(analysisCluster)) {
+        if (mTaskParameters.mFillInvMassMeson && mMesonClusterCuts.isSelected(analysisCluster)) {
           auto clustervec = buildClusterVector(analysisCluster);
           if (clsTypeEMC) {
             selclustersEMCAL.push_back(clustervec);
@@ -537,9 +521,13 @@ void ClusterTask::analyseTimeframe(const gsl::span<const o2::emcal::Cell>& cells
       }
 
     } // cls loop
-    if (isPhysicsTrigger && mFillInvMassMeson) {
-      buildAndAnalysePiOs(selclustersEMCAL, true);
-      buildAndAnalysePiOs(selclustersDCAL, false);
+    if (isPhysicsTrigger && mTaskParameters.mFillInvMassMeson) {
+      // Apply centrality selection (paticularly for heavy-ion)
+      // Selection based on cluster multiplicity
+      if (nClustersEventSelected >= mTaskParameters.mMesonMinClusterMultiplicity && nClustersEventSelected <= mTaskParameters.mMesonMaxClusterMultiplicity) {
+        buildAndAnalysePiOs(selclustersEMCAL, true);
+        buildAndAnalysePiOs(selclustersDCAL, false);
+      }
     }
     if (isPhysicsTrigger) {
       mHistNclustPerEvtSelected->Fill(nClustersEventSelected);
@@ -576,6 +564,10 @@ void ClusterTask::buildAndAnalysePiOs(const gsl::span<const TLorentzVector> clus
   if (clustervectors.size() > 1) {
     for (int icl = 0; icl < clustervectors.size() - 1; icl++) {
       for (int jcl = icl + 1; jcl < clustervectors.size(); jcl++) {
+        auto emax = clustervectors[icl].E() > clustervectors[jcl].E() ? clustervectors[icl].E() : clustervectors[jcl].E();
+        if (emax < mTaskParameters.mMinELeadingMeson) {
+          continue;
+        }
         TLorentzVector pi0candidate = clustervectors[icl] + clustervectors[jcl];
         if (!mMesonCuts.isSelected(pi0candidate)) {
           continue;
@@ -722,7 +714,7 @@ void ClusterTask::findClustersInternal(const gsl::span<const o2::emcal::Cell>& c
           cellsEvent = cellsEvent.subspan(0, rangeFECCells);
         }
       }
-      if (mFillControlHistograms) {
+      if (mTaskParameters.mFillControlHistograms) {
         auto isCalibTrigger = (iTrgRcrd.getTriggerBits() & o2::trigger::Cal),
              isPhysicsTrigger = (iTrgRcrd.getTriggerBits() & o2::trigger::PhT);
         for (auto& cell : cellsEvent) {
@@ -859,12 +851,61 @@ void ClusterTask::configureMesonSelection()
   if (hasConfigValue("mesonClustersRejectExotics")) {
     mMesonClusterCuts.mRejectExotics = std::stoi(getConfigValue("mesonClustersRejectExotics"));
   }
+  if (hasConfigValue("mesonClusterMinM02")) {
+    mMesonClusterCuts.mMinM02 = std::stod(getConfigValueLower("mesonClusterMinM02"));
+  }
+  if (hasConfigValue("mesonClusterMaxM02")) {
+    mMesonClusterCuts.mMaxM02 = std::stod(getConfigValueLower("mesonClusterMaxM02"));
+  }
+  if (hasConfigValue("mesonClusterMinM20")) {
+    mMesonClusterCuts.mMinM20 = std::stod(getConfigValueLower("mesonClusterMinM20"));
+  }
+  if (hasConfigValue("mesonClusterMaxM20")) {
+    mMesonClusterCuts.mMaxM20 = std::stod(getConfigValueLower("mesonClusterMaxM20"));
+  }
   if (hasConfigValue("mesonMinPt")) {
     mMesonCuts.mMinPt = std::stod(getConfigValue("mesonMinPt"));
   }
 
   ILOG(Info, Support) << mMesonClusterCuts;
   ILOG(Info, Support) << mMesonCuts;
+}
+
+void ClusterTask::configureTaskParameters()
+{
+  auto get_bool = [](const std::string_view input) -> bool {
+    return input == "true";
+  };
+
+  /*
+  int mMultiplicityRange = 200;        ///< Range for multiplicity histograms
+  */
+  if (hasConfigValue("useInternalClusterizer")) {
+    mTaskParameters.mInternalClusterizer = get_bool(getConfigValueLower("useInternalClusterizer"));
+  }
+  if (hasConfigValue("calibrateCells")) {
+    mTaskParameters.mCalibrate = get_bool(getConfigValueLower("calibrateCells"));
+  }
+  if (hasConfigValue("fillControlHistograms")) {
+    mTaskParameters.mFillControlHistograms = get_bool(getConfigValueLower("fillControlHistograms"));
+  }
+  if (hasConfigValue("hasInvMassMesons")) {
+    mTaskParameters.mFillInvMassMeson = get_bool(getConfigValueLower("hasInvMassMesons"));
+  }
+  if (hasConfigValue("MultiplicityRange")) {
+    mTaskParameters.mMultiplicityRange = std::stoi(getConfigValueLower("MultiplicityRange"));
+  }
+  if (hasConfigValue("mesonMinClusterMultiplicity")) {
+    mTaskParameters.mMesonMinClusterMultiplicity = std::stoi(getConfigValueLower("mesonMinClusterMultiplicity"));
+  }
+  if (hasConfigValue("mesonMaxClusterMultiplicity")) {
+    mTaskParameters.mMesonMaxClusterMultiplicity = std::stoi(getConfigValueLower("mesonMaxClusterMultiplicity"));
+  }
+  if (hasConfigValue("mesonMinEClusterLeading")) {
+    mTaskParameters.mMinELeadingMeson = std::stod(getConfigValueLower("mesonMinEClusterLeading"));
+  }
+
+  ILOG(Info, Support) << mTaskParameters;
 }
 
 void ClusterTask::resetHistograms()
@@ -973,6 +1014,12 @@ bool ClusterTask::MesonClusterSelection::isSelected(const o2::emcal::AnalysisClu
   if (cluster.getNCells() < mMinNCell) {
     return false;
   }
+  if (cluster.getM02() < mMinM02 || cluster.getM02() > mMaxM02) {
+    return false;
+  }
+  if (cluster.getM20() < mMinM20 || cluster.getM20() > mMaxM20) {
+    return false;
+  }
   if (mRejectExotics && cluster.getIsExotic()) {
     return false;
   }
@@ -986,6 +1033,10 @@ void ClusterTask::MesonClusterSelection::print(std::ostream& stream) const
          << "Min. energy:          " << mMinE << " GeV\n"
          << "Max. time:            " << mMaxTime << " ns\n"
          << "Min. number of cells: " << mMinNCell << "\n"
+         << "Min. M02:             " << mMinM02 << "\n"
+         << "Max. M02:             " << mMaxM02 << "\n"
+         << "Min. M20:             " << mMinM20 << "\n"
+         << "Max. M20:             " << mMaxM20 << "\n"
          << "Reject exotics:       " << (mRejectExotics ? "yes" : "no") << "\n";
 }
 
@@ -1004,6 +1055,20 @@ void ClusterTask::MesonSelection::print(std::ostream& stream) const
          << "Min. pt:   " << mMinPt << " GeV/c\n";
 }
 
+void ClusterTask::TaskParams::print(std::ostream& stream) const
+{
+  stream << "General task settings: \n"
+         << "======================================================\n"
+         << "Internal clusterizer:                           " << (mInternalClusterizer ? "enabled" : "disabled") << "\n"
+         << "Calibrate cells before clusterization:          " << (mCalibrate ? "yes" : "no") << "\n"
+         << "Filling cell-level control histograms:          " << (mFillControlHistograms ? "yes" : "no") << "\n"
+         << "Invariant mass histograms for Meson candidates: " << (mFillInvMassMeson ? "enabled" : "disabled") << "\n"
+         << "Max. range of multiplicity histograms:          " << mMultiplicityRange << "\n"
+         << "Min. cluster multiplicity for Meson candidates: " << mMesonMinClusterMultiplicity << "\n"
+         << "Max. cluster mutliplicity for Meson candidates: " << mMesonMaxClusterMultiplicity << "\n"
+         << "Min. energy leading for Meson candidates:       " << mMinELeadingMeson << " GeV\n";
+}
+
 std::ostream& operator<<(std::ostream& stream, const ClusterTask::ClusterizerParams& params)
 {
   params.print(stream);
@@ -1017,6 +1082,12 @@ std::ostream& operator<<(std::ostream& stream, const ClusterTask::MesonClusterSe
 }
 
 std::ostream& operator<<(std::ostream& stream, const ClusterTask::MesonSelection& cuts)
+{
+  cuts.print(stream);
+  return stream;
+}
+
+std::ostream& operator<<(std::ostream& stream, const ClusterTask::TaskParams& cuts)
 {
   cuts.print(stream);
   return stream;

@@ -20,14 +20,14 @@
 #include "QualityControl/MonitorObject.h"
 #include "QualityControl/QcInfoLogger.h"
 #include "QualityControl/Reductor.h"
+#include "QualityControl/ReductorTObject.h"
 #include "QualityControl/ObjectMetadataKeys.h"
+#include "QualityControl/ActivityHelpers.h"
 #include "ITS/TH2XlineReductor.h"
 #include <TCanvas.h>
 #include <TH1.h>
 #include <TMultiGraph.h>
 #include <TDatime.h>
-#include <map>
-#include <string>
 
 using namespace o2::quality_control;
 using namespace o2::quality_control::core;
@@ -99,11 +99,26 @@ void TrendingTaskITSFhr::trendValues(const Trigger& t, repository::DatabaseInter
   int count = 0;
   for (auto& dataSource : mConfig.dataSources) {
 
-    // todo: make it agnostic to MOs, QOs or other objects. Let the reductor
-    // cast to whatever it needs.
+    // The FHR Task generates objects specific to particular detector layers.
+    // Since detector layers are assigned to different subsets of FLPs, the merged objects
+    // do not have common validity, as FLPs do not have QC cycles ideally in sync.
+    // Thus we have look for the objects a bit behind and forward from the trigger timestamp as well.
+    auto timestamp = t.timestamp;
+    const auto objFullPath = t.activity.mProvenance + "/" + dataSource.path;
+    const auto filterMetadata = activity_helpers::asDatabaseMetadata(t.activity, false);
+    const auto objectValidity = qcdb.getLatestObjectValidity(objFullPath, filterMetadata);
+    const auto maxShiftMs = mConfig.maxObjectTimeShiftMs;
+    if (objectValidity.isValid() && t.timestamp >= objectValidity.getMin() - maxShiftMs && t.timestamp <= objectValidity.getMax() + maxShiftMs) {
+      timestamp = objectValidity.getMax() - 1;
+    } else {
+      ILOG(Warning, Devel) << "Could not find an object '" << objFullPath << "' in the proximity of timestamp "
+                           << t.timestamp << " with max shift of " << mConfig.maxObjectTimeShiftMs << "ms" << ENDM;
+      continue;
+    }
+
     if (dataSource.type == "repository") {
       // auto mo = qcdb.retrieveMO(dataSource.path, dataSource.name);
-      auto mo = qcdb.retrieveMO(dataSource.path, "", t.timestamp, t.activity);
+      auto mo = qcdb.retrieveMO(dataSource.path, "", timestamp, t.activity);
       if (mo == nullptr)
         continue;
       if (!count) {
@@ -113,13 +128,15 @@ void TrendingTaskITSFhr::trendValues(const Trigger& t, repository::DatabaseInter
         runlist.push_back(std::to_string(mMetaData.runNumber));
       }
       TObject* obj = mo ? mo->getObject() : nullptr;
-      if (obj) {
-        mReductors[dataSource.name]->update(obj);
+      auto reductor = dynamic_cast<ReductorTObject*>(mReductors[dataSource.name].get());
+      if (obj && reductor) {
+        reductor->update(obj);
       }
     } else if (dataSource.type == "repository-quality") {
-      auto qo = qcdb.retrieveQO(dataSource.path + "/" + dataSource.name);
-      if (qo) {
-        mReductors[dataSource.name]->update(qo.get());
+      auto qo = qcdb.retrieveQO(dataSource.path + "/" + dataSource.name, timestamp);
+      auto reductor = dynamic_cast<ReductorTObject*>(mReductors[dataSource.name].get());
+      if (qo && reductor) {
+        reductor->update(qo.get());
       }
     } else {
       ILOGE << "Unknown type of data source '" << dataSource.type << "'.";
@@ -222,15 +239,17 @@ void TrendingTaskITSFhr::storePlots(repository::DatabaseInterface& qcdb)
 
         int npoints = (int)runlist.size();
         TH1F* hfake = new TH1F("hfake", "hfake", npoints, 0.5, (double)npoints + 0.5);
-        if (ilay < 3) {
-          SetGraphNameAndAxes(hfake,
-                              Form("L%d - %s trends", ilay, trendtitlesIB[id].c_str()),
-                              isrun ? "run" : "time", ytitlesIB[id], ymin[id], ymaxIB[id], runlist);
-        } else {
-          SetGraphNameAndAxes(hfake,
-                              Form("L%d - %s trends", ilay, trendtitlesOB[id].c_str()),
-                              isrun ? "run" : "time", ytitlesOB[id], ymin[id], ymaxOB[id], runlist);
-        }
+
+        Double_t max, min;
+        max = gTrendsAll[ilay * NTRENDSFHR + id]->GetYaxis()->GetXmax();
+        if (id == 2)
+          min = -0.5;
+        else
+          min = gTrendsAll[ilay * NTRENDSFHR + id]->GetYaxis()->GetXmin();
+
+        SetGraphNameAndAxes(hfake,
+                            Form("L%d - %s trends", ilay, trendtitlesOB[id].c_str()),
+                            isrun ? "run" : "time", ytitlesOB[id], min, max, runlist);
 
         hfake->Draw();
         gTrendsAll[ilay * NTRENDSFHR + id]->Draw();

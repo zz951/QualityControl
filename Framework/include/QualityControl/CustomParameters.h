@@ -22,6 +22,7 @@
 #include <string>
 #include <unordered_map>
 #include <optional>
+#include <boost/property_tree/ptree_fwd.hpp>
 
 namespace o2::quality_control::core
 {
@@ -63,22 +64,40 @@ class CustomParameters
 
   /**
    * Return all the parameters (key-value pairs) for the default runType and the default beamType.
-   * @return
+   * @return a map of the key-value pairs for
+   * @throw std::out_of_range if no key-value pair correspond to these beamType and runType
    */
   const std::unordered_map<std::string, std::string>& getAllDefaults();
 
   /**
    * Return the value for the given key, runType and beamType.
+   * If no key is found for the runType and the Beamtype, the fallback is to substitute with "default", first for beamType then for runType.
+   * An exception is raised only if the key could not be found in any combination of the provided run and beam types with "default".
    * @param key
    * @param runType
    * @param beamType
    * @return the value for the given key, runType and beamType.
-   * @throw std::out_of_range if no key-value pair corresponds to this key and to these beamType and runType
+   * @throw std::out_of_range if no key-value pair corresponds to this key and to these beamType and runType and that substitutions
+   * with "default" failed.
    */
   std::string at(const std::string& key, const std::string& runType = "default", const std::string& beamType = "default") const;
 
   /**
-   * Return the optional value for the given key, runType and beamType (the two latter optional).
+  * Return the value for the given key, runType and beamType.
+  * If no key is found for the runType and the Beamtype, the fallback is to substitute with "default", first for beamType then for runType.
+  * An exception is raised only if the key could not be found in any combination of the provided run and beam types with "default".
+  * @param key
+  * @param activity
+  * @return the value for the given key and for the given activity.
+  * @throw std::out_of_range if no key-value pair corresponds to this key and to this activity and that substitutions
+  * with "default" failed.
+  */
+  std::string at(const std::string& key, const Activity& activity) const;
+
+  /**
+   * Return the optional value for the given key, runType and beamType.
+   * If no key is found for the runType and the Beamtype, the fallback is to substitute with "default", first for beamType then for runType.
+   * Empty is only returned if the key could not be found in any combination of the provided run and beam types with "default".
    * @param key
    * @param runType
    * @param beamType
@@ -87,8 +106,9 @@ class CustomParameters
   std::optional<std::string> atOptional(const std::string& key, const std::string& runType = "default", const std::string& beamType = "default") const;
 
   /**
-   * Return the optional value for the given key in the specified activity.
-   * @param key
+   * Return the optional value for the given key, runType and beamType.
+   * If no key is found for the runType and the Beamtype, the fallback is to substitute with "default", first for beamType then for runType.
+   * Empty is only returned if the key could not be found in any combination of the provided run and beam types with "default".   * @param key
    * @param activity
    * @return an optional with the value for the given key and for the given activity.
    */
@@ -104,6 +124,8 @@ class CustomParameters
    * @return the value for the given key, runType and beamType. If it is not found, it returns an empty string or defaultValue if provided.
    */
   std::string atOrDefaultValue(const std::string& key, std::string defaultValue = "", const std::string& runType = "default", const std::string& beamType = "default");
+
+  std::string atOrDefaultValue(const std::string& key, std::string defaultValue, const Activity& activity) const;
 
   /**
    * Returns the number of items found for the provided key, beamType and runType. It can only be either 0 or 1.
@@ -146,6 +168,12 @@ class CustomParameters
    * prints the CustomParameters
    */
   friend std::ostream& operator<<(std::ostream& out, const CustomParameters& customParameters);
+
+  /**
+   * \brief Provided the config subtree of the custom parameters, load its content and populate this CustomParameters.
+   * \param paramsTree The subtree corresponding to extendedTaskParameters, extendedCheckParameters, etc...
+   */
+  void populateCustomParameters(const boost::property_tree::ptree& paramsTree);
 
  private:
   CustomParametersType mCustomParameters;

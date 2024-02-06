@@ -29,6 +29,7 @@ function delete_data() {
   rm -f /tmp/batch_test_mergedB${UNIQUE_ID}.root
   rm -f /tmp/batch_test_mergedC${UNIQUE_ID}.root
   rm -f /tmp/batch_test_obj${UNIQUE_ID}.root
+  rm -f /tmp/batch_test_obj_mw${UNIQUE_ID}.root
   rm -f /tmp/batch_test_check${UNIQUE_ID}.root
 }
 
@@ -54,7 +55,6 @@ fi
 
 delete_data
 
-export O2_DPL_DEPLOYMENT_MODE=Grid
 # Run the Tasks 3 times, including twice with the same file.
 o2-qc-run-producer --message-amount 100 --message-rate 100 | o2-qc --config json:/${JSON_DIR}/batch-test.json --local-batch /tmp/batch_test_mergedA${UNIQUE_ID}.root --run
 o2-qc-run-producer --message-amount 100 --message-rate 100 | o2-qc --config json:/${JSON_DIR}/batch-test.json --local-batch /tmp/batch_test_mergedA${UNIQUE_ID}.root --run
@@ -64,9 +64,9 @@ o2-qc-file-merger --input-files /tmp/batch_test_mergedA${UNIQUE_ID}.root /tmp/ba
 # Run Checks and Aggregators, publish results to QCDB
 o2-qc --config json:/${JSON_DIR}/batch-test.json --remote-batch /tmp/batch_test_mergedC${UNIQUE_ID}.root --run
 
-# check MonitorObject
+# check the integrated MonitorObject
 # first the return code must be 200
-code=$(curl -L ccdb-test.cern.ch:8080/qc/TST/MO/BatchTestTask${UNIQUE_ID}/example/`date +%s`999 --write-out %{http_code} --silent --output /tmp/batch_test_obj${UNIQUE_ID}.root)
+code=$(curl -L ccdb-test.cern.ch:8080/qc/TST/MO/BatchTestTask${UNIQUE_ID}/example/8000000/PeriodName=LHC9000x/PassName=apass500 --write-out %{http_code} --silent --output /tmp/batch_test_obj${UNIQUE_ID}.root)
 if (( $code != 200 )); then
   echo "Error, monitor object of the QC Task could not be found."
   delete_data
@@ -88,9 +88,33 @@ then
   exit 5
 fi
 
+# check the moving window MonitorObject
+# first the return code must be 200
+code=$(curl -L ccdb-test.cern.ch:8080/qc/TST/MO/BatchTestTask${UNIQUE_ID}/mw/example/8000000/PeriodName=LHC9000x/PassName=apass500 --write-out %{http_code} --silent --output /tmp/batch_test_obj_mw${UNIQUE_ID}.root)
+if (( $code != 200 )); then
+  echo "Error, monitor object of the QC Task could not be found."
+  delete_data
+  exit 3
+fi
+# try to check that we got a valid root object
+root -b -l -q -e 'TFile f("/tmp/batch_test_obj_mw${UNIQUE_ID}.root"); f.Print();'
+if (( $? != 0 )); then
+  echo "Error, monitor object of the QC Task is invalid."
+  delete_data
+  exit 4
+fi
+# try if it is a non empty histogram
+entries=`root -b -l -q -e 'TFile f("/tmp/batch_test_obj_mw${UNIQUE_ID}.root"); TH1F *h = (TH1F*)f.Get("ccdb_object"); cout << h->GetEntries() << endl;' | tail -n 1`
+if [ $entries -lt 225 ] 2>/dev/null
+then
+  echo "The histogram of the QC Task has less than 225 (75%) of expected samples."
+  delete_data
+  exit 5
+fi
+
 # check QualityObject
 # first the return code must be 200
-code=$(curl -L ccdb-test.cern.ch:8080/qc/TST/QO/BatchTestCheck${UNIQUE_ID}/`date +%s`999 --write-out %{http_code} --silent --output /tmp/batch_test_check${UNIQUE_ID}.root)
+code=$(curl -L ccdb-test.cern.ch:8080/qc/TST/QO/BatchTestCheck${UNIQUE_ID}/8000000/PeriodName=LHC9000x/PassName=apass500 --write-out %{http_code} --silent --output /tmp/batch_test_check${UNIQUE_ID}.root)
 if (( $code != 200 )); then
   echo "Error, quality object of the QC Task could not be found."
   delete_data

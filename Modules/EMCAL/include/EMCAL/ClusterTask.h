@@ -18,6 +18,7 @@
 #define QC_MODULE_EMC_EMCCLUSTERTASK_H
 
 #include <array>
+#include <climits>
 #include <iosfwd>
 #include <unordered_map>
 #include <string>
@@ -86,6 +87,10 @@ class ClusterTask final : public TaskInterface
     double mMinE = 0.5;         ///< Min. Cluster E
     double mMaxTime = 25.;      ///< Max cluster time relative to 0
     int mMinNCell = 2;          ///< Min. Number of cells in cluster
+    double mMinM02 = -DBL_MAX;  ///< Min. M02 (shower shape)
+    double mMaxM02 = DBL_MAX;   ///< Max. M02 (shower shape)
+    double mMinM20 = -DBL_MAX;  ///< Min. M20 (shower shape)
+    double mMaxM20 = DBL_MAX;   ///< Max. M20 (shower shape)
     bool mRejectExotics = true; ///< Reject exotic clusters
 
     /// \brief Select cluster based on cluster cuts
@@ -109,6 +114,23 @@ class ClusterTask final : public TaskInterface
     bool isSelected(const TLorentzVector& mesonCandidate) const;
 
     /// \brief Print cuts to output stream
+    /// \param stream Stream used for printing
+    void print(std::ostream& stream) const;
+  };
+
+  /// \struct TaskParams
+  /// \brief Other task parameters
+  struct TaskParams {
+    bool mInternalClusterizer = false;          ///< Use run internal clusterizer, do not subscribe to external cluster collection
+    bool mCalibrate = false;                    ///< Perform recalibration
+    bool mFillInvMassMeson = false;             ///< Fill invariant mass of meson candidates
+    bool mFillControlHistograms = false;        ///< Fill control histograms at cell level
+    int mMultiplicityRange = 200;               ///< Range for multiplicity histograms
+    int mMesonMinClusterMultiplicity = 0;       ///< Min. cluster multiplicty meson selection
+    int mMesonMaxClusterMultiplicity = INT_MAX; ///< Max. cluster multiplicity meson selection
+    double mMinELeadingMeson = 0;               ///< Min. energy leading leg meson candidates
+
+    /// \brief Print task parameters to output stream
     /// \param stream Stream used for printing
     void print(std::ostream& stream) const;
   };
@@ -201,6 +223,9 @@ class ClusterTask final : public TaskInterface
   /// \brief Configure meson selection (cluster and pair cuts) for meson candidate histograms
   void configureMesonSelection();
 
+  /// \brief Configure task parameters
+  void configureTaskParameters();
+
   /// \brief Check for config value in taskParameter list
   /// \param key Key to check
   /// \return true if the key is found in the taskParameters, false otherwise
@@ -238,6 +263,7 @@ class ClusterTask final : public TaskInterface
   std::unique_ptr<o2::emcal::EventHandler<o2::emcal::Cell>> mEventHandler;     ///< Event handler for event loop
   std::unique_ptr<o2::emcal::ClusterFactory<o2::emcal::Cell>> mClusterFactory; ///< Cluster factory for cluster kinematics
   std::unique_ptr<o2::emcal::Clusterizer<o2::emcal::Cell>> mClusterizer;       ///< Internal clusterizer
+  TaskParams mTaskParameters;                                                  ///< Task parameters (i.e. histogram ranges)
   ClusterizerParams mClusterizerSettings;                                      ///< Settings for internal clusterizer
   InputBindings mTaskInputBindings;                                            ///< Bindings for input containers
   MesonClusterSelection mMesonClusterCuts;                                     ///< Cuts used in the meson selection
@@ -249,11 +275,6 @@ class ClusterTask final : public TaskInterface
   o2::emcal::BadChannelMap* mBadChannelMap = nullptr;        ///< EMCAL channel map
   o2::emcal::TimeCalibrationParams* mTimeCalib = nullptr;    ///< EMCAL time calib
   o2::emcal::GainCalibrationFactors* mEnergyCalib = nullptr; ///< EMCAL energy calib factors
-
-  bool mInternalClusterizer = false;   ///< Use run internal clusterizer, do not subscribe to external cluster collection
-  bool mCalibrate = false;             ///< Perform recalibration
-  bool mFillInvMassMeson = false;      ///< Fill invariant mass of meson candidates
-  bool mFillControlHistograms = false; ///< Fill control histograms at cell level
 
   ///////////////////////////////////////////////////////////////////////////////
   /// Control histograms input cells                                          ///
@@ -330,6 +351,12 @@ std::ostream& operator<<(std::ostream& stream, const ClusterTask::MesonClusterSe
 /// \param cuts Meson candidate cuts to be printed
 /// \return Stream after printing the cuts
 std::ostream& operator<<(std::ostream& stream, const ClusterTask::MesonSelection& cuts);
+
+/// \brief Output stream operator for task parameters in the ClusterTask
+/// \param stream Stream used for printing the task parameter object
+/// \param cuts Task parameters to be printed
+/// \return Stream after printing the parameters
+std::ostream& operator<<(std::ostream& stream, const ClusterTask::TaskParams& params);
 
 } // namespace o2::quality_control_modules::emcal
 

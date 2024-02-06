@@ -20,6 +20,7 @@
 #include "QualityControl/TaskRunnerConfig.h"
 #include "QualityControl/TaskSpec.h"
 #include "QualityControl/InfrastructureSpecReader.h"
+#include "QualityControl/TimekeeperFactory.h"
 #include "QualityControl/QcInfoLogger.h"
 
 #include <Framework/DeviceSpec.h>
@@ -27,6 +28,7 @@
 #include <Headers/DataHeader.h>
 #include <Framework/O2ControlLabels.h>
 #include <Framework/DataProcessorLabel.h>
+#include <Framework/DefaultsHelpers.h>
 #include <DetectorsBase/GRPGeomHelper.h>
 #include <DataFormatsGlobalTracking/RecoContainer.h>
 #include <ReconstructionDataFormats/GlobalTrackID.h>
@@ -51,6 +53,10 @@ o2::framework::DataProcessorSpec TaskRunnerFactory::create(const TaskRunnerConfi
   };
   newTask.labels.emplace_back(o2::framework::ecs::qcReconfigurable);
   newTask.labels.emplace_back(TaskRunner::getTaskRunnerLabel());
+  if (!taskConfig.critical) {
+    framework::DataProcessorLabel expendableLabel = { "expendable" };
+    newTask.labels.emplace_back(expendableLabel);
+  }
 
   return newTask;
 }
@@ -85,7 +91,8 @@ TaskRunnerConfig TaskRunnerFactory::extractConfig(const CommonSpec& globalConfig
     { "Ideal", o2::base::GRPGeomRequest::GeomRequest::Ideal },
     { "Alignments", o2::base::GRPGeomRequest::GeomRequest::Alignments }
   };
-  const auto& grp = taskSpec.grpGeomRequestSpec;
+  auto grp = taskSpec.grpGeomRequestSpec;
+  grp.askGRPECS |= TimekeeperFactory::needsGRPECS(DefaultsHelpers::deploymentMode());
   auto grpGeomRequest = grp.anyRequestEnabled()                                                               //
                           ? std::make_shared<o2::base::GRPGeomRequest>(                                       //
                               grp.askTime, grp.askGRPECS, grp.askGRPLHCIF, grp.askGRPMagField, grp.askMatLUT, //
@@ -126,7 +133,10 @@ TaskRunnerConfig TaskRunnerFactory::extractConfig(const CommonSpec& globalConfig
     globalConfig.activityPeriodName,
     globalConfig.activityPassName,
     globalConfig.activityProvenance,
-    { globalConfig.activityStart, globalConfig.activityEnd }
+    { globalConfig.activityStart, globalConfig.activityEnd },
+    globalConfig.activityBeamType,
+    globalConfig.activityPartitionName,
+    globalConfig.activityFillNumber
   };
 
   o2::globaltracking::RecoContainer rd;
@@ -138,6 +148,7 @@ TaskRunnerConfig TaskRunnerFactory::extractConfig(const CommonSpec& globalConfig
     taskSpec.className,
     multipleCycleDurations,
     taskSpec.maxNumberCycles,
+    taskSpec.critical,
     globalConfig.consulUrl,
     globalConfig.conditionDBUrl,
     globalConfig.monitoringUrl,
@@ -153,7 +164,9 @@ TaskRunnerConfig TaskRunnerFactory::extractConfig(const CommonSpec& globalConfig
     globalConfig.infologgerDiscardParameters,
     fallbackActivity,
     grpGeomRequest,
-    globalTrackingDataRequest
+    globalTrackingDataRequest,
+    taskSpec.movingWindows,
+    taskSpec.disableLastCycle
   };
 }
 
@@ -187,7 +200,7 @@ InputSpec TaskRunnerFactory::createTimerInputSpec(const CommonSpec& globalConfig
 
 void TaskRunnerFactory::customizeInfrastructure(std::vector<framework::CompletionPolicy>& policies)
 {
-  auto matcher = [label = TaskRunner::getTaskRunnerLabel()](framework::DeviceSpec const& device) {
+  auto matcher = [label = TaskRunner::getTaskRunnerLabel()](auto const& device) {
     return std::find(device.labels.begin(), device.labels.end(), label) != device.labels.end();
   };
   auto callback = TaskRunner::completionPolicyCallback;

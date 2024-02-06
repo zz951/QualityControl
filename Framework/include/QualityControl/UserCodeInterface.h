@@ -18,13 +18,11 @@
 #define QUALITYCONTROL_USERCODEINTERFACE_H
 
 #include <string>
-#include <unordered_map>
 #include <map>
 #include <Rtypes.h>
-#include <CCDB/BasicCCDBManager.h>
 
+#include "QualityControl/ConditionAccess.h"
 #include "QualityControl/CustomParameters.h"
-#include "QualityControl/QcInfoLogger.h"
 
 namespace o2::quality_control::core
 {
@@ -32,7 +30,7 @@ namespace o2::quality_control::core
 /// \brief  Common interface for Check and Task Interfaces.
 ///
 /// \author Barthelemy von Haller
-class UserCodeInterface
+class UserCodeInterface : public ConditionAccess
 {
  public:
   /// Default constructor
@@ -48,15 +46,8 @@ class UserCodeInterface
   /// It is called each time mCustomParameters is updated, including the first time it is read.
   virtual void configure() = 0;
 
-  void setCcdbUrl(const std::string& url);
   const std::string& getName() const;
   void setName(const std::string& name);
-
-  /**
-   * Get an object from the CCDB. The object is owned by the CCDBManager, don't delete it !
-   */
-  template <typename T>
-  T* retrieveConditionAny(std::string const& path, std::map<std::string, std::string> const& metadata = {}, long timestamp = -1);
 
  protected:
   CustomParameters mCustomParameters;
@@ -64,14 +55,6 @@ class UserCodeInterface
 
   ClassDef(UserCodeInterface, 3)
 };
-
-template <typename T>
-T* UserCodeInterface::retrieveConditionAny(std::string const& path, std::map<std::string, std::string> const& metadata, long timestamp)
-{
-  auto& mgr = o2::ccdb::BasicCCDBManager::instance();
-  o2::ccdb::BasicCCDBManager::instance().setTimestamp(timestamp);
-  return mgr.getSpecific<T>(path, mgr.getTimestamp(), metadata);
-}
 
 } // namespace o2::quality_control::core
 

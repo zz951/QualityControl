@@ -59,6 +59,7 @@ struct TaskSpec {
   DataSourceSpec dataSource;
   // advanced
   bool active = true;
+  bool critical = true;
   int maxNumberCycles = -1;
   size_t resetAfterCycles = 0;
   std::string saveObjectsToFile;
@@ -74,6 +75,8 @@ struct TaskSpec {
   std::vector<size_t> mergersPerLayer{ 1 };
   GRPGeomRequestSpec grpGeomRequestSpec;
   GlobalTrackingDataRequestSpec globalTrackingDataRequest;
+  std::vector<std::string> movingWindows;
+  bool disableLastCycle = false;
 };
 
 } // namespace o2::quality_control::core

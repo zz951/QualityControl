@@ -46,6 +46,7 @@ add_library(O2QualityControl
   src/CheckRunnerFactory.cxx
   src/AggregatorRunnerFactory.cxx
   src/CheckInterface.cxx
+  src/AggregatorInterface.cxx
   src/DatabaseFactory.cxx
   src/CcdbDatabase.cxx
   src/QcInfoLogger.cxx
@@ -55,6 +56,8 @@ add_library(O2QualityControl
   src/TaskInterface.cxx
   src/UserCodeInterface.cxx
   src/RepositoryBenchmark.cxx
+  src/RepoPathUtils.cxx
+  src/stringUtils.cxx
   src/InfrastructureGenerator.cxx
   src/InfrastructureSpecReader.cxx
   src/Check.cxx
@@ -91,8 +94,11 @@ add_library(O2QualityControl
   src/runnerUtils.cxx
   src/Timekeeper.cxx
   src/TimekeeperSynchronous.cxx
-  src/TimekeeperAsynchronous.cxx)
-
+  src/TimekeeperAsynchronous.cxx
+  src/WorkflowType.cxx
+  src/TimekeeperFactory.cxx
+  src/RootFileStorage.cxx
+  src/ReductorHelpers.cxx)
 
 target_include_directories(
   O2QualityControl
@@ -234,10 +240,12 @@ add_executable(o2-qc-test-core
                test/testPostProcessingRunner.cxx
                test/testQuality.cxx
                test/testQualityObject.cxx
+               test/testRootFileStorage.cxx
                test/testTaskInterface.cxx
                test/testTimekeeper.cxx
                test/testTriggerHelpers.cxx
                test/testVersion.cxx
+               test/testMonitorObjectCollection.cxx
                )
 set_property(TARGET o2-qc-test-core
              PROPERTY RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
@@ -317,7 +325,7 @@ endforeach()
 
 foreach(t testWorkflow testTaskRunner testCheckWorkflow
         testPostProcessingConfig testPostProcessingInterface
-        testCheck testTrendingTask)
+        testCheck testTrendingTask testCustomParameters)
   target_sources(${t} PRIVATE
                  ${CMAKE_BINARY_DIR}/getTestDataDirectory.cxx)
   target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR})
@@ -422,7 +430,6 @@ install(
 # ---- Install config files and scripts ----
 
 install(FILES example-default.json
-              alfa.json
               basic.json
               basic-aggregator.json
               basic-external-histo.json
@@ -435,7 +442,6 @@ install(FILES example-default.json
               readout-no-sampling.json
               postprocessing.json
               streamerinfos.root
-              streamerinfos_v017.root
         DESTINATION etc)
 
 install(PROGRAMS script/o2-qc-functional-test.sh
@@ -454,7 +460,8 @@ set(TEST_FILES
   "testEmptyConfig.json"
   "testCheckWorkflow.json"
   "testTrendingTask.json"
-  "testWorkflow.json")
+  "testWorkflow.json"
+  "testThrowNameClash.json")
 set(TEST_FILES_PREFIXED ${TEST_FILES})
 list(TRANSFORM TEST_FILES_PREFIXED PREPEND ${CMAKE_BINARY_DIR}/tests/)
 

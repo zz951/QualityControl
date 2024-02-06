@@ -17,7 +17,6 @@
 #include "QualityControl/MonitorObjectCollection.h"
 #include "QualityControl/MonitorObject.h"
 #include "QualityControl/QcInfoLogger.h"
-#include "QualityControl/ActivityHelpers.h"
 
 #include <Mergers/MergerAlgorithm.h>
 
@@ -58,8 +57,14 @@ void MonitorObjectCollection::merge(mergers::MergeInterface* const other)
       }
       // That might be another collection or a concrete object to be merged, we walk on the collection recursively.
       algorithm::merge(targetMO->getObject(), otherMO->getObject());
-      targetMO->updateValidity(otherMO->getValidity().getMin());
-      targetMO->updateValidity(otherMO->getValidity().getMax());
+      if (otherMO->getValidity().isValid()) {
+        if (targetMO->getValidity().isInvalid()) {
+          targetMO->setValidity(otherMO->getValidity());
+        } else {
+          targetMO->updateValidity(otherMO->getValidity().getMin());
+          targetMO->updateValidity(otherMO->getValidity().getMax());
+        }
+      }
     } else {
       // A corresponding object in the target collection could not be found.
       // We prefer to clone instead of passing the pointer in order to simplify deleting the `other`.
@@ -103,6 +108,50 @@ void MonitorObjectCollection::setDetector(const std::string& detector)
 const std::string& MonitorObjectCollection::getDetector() const
 {
   return mDetector;
+}
+
+void MonitorObjectCollection::setTaskName(const std::string& taskName)
+{
+  mTaskName = taskName;
+}
+
+const std::string& MonitorObjectCollection::getTaskName() const
+{
+  return mTaskName;
+}
+
+MergeInterface* MonitorObjectCollection::cloneMovingWindow() const
+{
+  auto mw = new MonitorObjectCollection();
+  mw->SetOwner(true);
+  mw->setDetector(this->getDetector());
+  mw->setTaskName(this->getTaskName());
+  auto mwName = std::string(this->GetName()) + "/mw";
+  mw->SetName(mwName.c_str());
+
+  auto it = this->MakeIterator();
+  while (auto obj = it->Next()) {
+    auto mo = dynamic_cast<MonitorObject*>(obj);
+    if (mo == nullptr) {
+      ILOG(Warning) << "Could not cast an object of type '" << obj->ClassName()
+                    << "' in MonitorObjectCollection to MonitorObject, skipping." << ENDM;
+      continue;
+    }
+    if (!mo->getCreateMovingWindow()) {
+      continue;
+    }
+    if (mo->getValidity().isInvalid()) {
+      ILOG(Warning) << "MonitorObject '" << mo->getName() << "' validity is invalid, will not create a moving window" << ENDM;
+      continue;
+    }
+    auto clonedMO = dynamic_cast<MonitorObject*>(mo->Clone());
+    clonedMO->setTaskName(clonedMO->getTaskName() + "/mw");
+    clonedMO->setIsOwner(true);
+    mw->Add(clonedMO);
+  }
+  delete it;
+
+  return mw;
 }
 
 } // namespace o2::quality_control::core

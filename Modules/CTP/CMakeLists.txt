@@ -2,7 +2,7 @@
 
 add_library(O2QcCTP)
 
-target_sources(O2QcCTP PRIVATE src/CountersQcTask.cxx  src/RawDataQcTask.cxx )
+target_sources(O2QcCTP PRIVATE src/RawDataReaderCheck.cxx  src/CountersQcTask.cxx  src/RawDataQcTask.cxx )
 
 target_include_directories(
   O2QcCTP
@@ -21,14 +21,15 @@ add_root_dictionary(O2QcCTP
                     HEADERS
   include/CTP/CountersQcTask.h
 include/CTP/RawDataQcTask.h
-                    LINKDEF include/CTP/LinkDef.h)
+      include/CTP/RawDataReaderCheck.h
+                          LINKDEF include/CTP/LinkDef.h)
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/CTP
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/QualityControl")
 
 # ---- Test(s) ----
 
-set(TEST_SRCS test/testQcCTP.cxx)
+#set(TEST_SRCS test/testQcCTP.cxx) # uncomment to reenable the test which was empty
 
 foreach(test ${TEST_SRCS})
   get_filename_component(test_name ${test} NAME)
@@ -42,4 +43,3 @@ foreach(test ${TEST_SRCS})
     PROPERTY RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
   set_tests_properties(${test_name} PROPERTIES TIMEOUT 20)
 endforeach()
-

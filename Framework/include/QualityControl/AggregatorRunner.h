@@ -29,6 +29,7 @@
 #include "QualityControl/Activity.h"
 #include "QualityControl/AggregatorRunnerConfig.h"
 #include "QualityControl/AggregatorConfig.h"
+#include "QualityControl/Activity.h"
 
 namespace o2::framework
 {
@@ -139,7 +140,6 @@ class AggregatorRunner : public framework::Task
    */
   void prepareInputs();
 
-  void initInfoLogger(framework::InitContext& iCtx);
   void initDatabase();
   void initMonitoring();
   void initServiceDiscovery();
@@ -175,13 +175,13 @@ class AggregatorRunner : public framework::Task
 
   // General state
   std::string mDeviceName;
-  core::Activity mActivity;
+  std::shared_ptr<core::Activity> mActivity; // shareable with the Aggregators
   std::vector<std::shared_ptr<Aggregator>> mAggregators;
   std::shared_ptr<o2::quality_control::repository::DatabaseInterface> mDatabase;
   AggregatorRunnerConfig mRunnerConfig;
   std::vector<AggregatorConfig> mAggregatorsConfig;
   core::QualityObjectsMapType mQualityObjects; // where we cache the incoming quality objects and the output of the aggregators
-  UpdatePolicyManager updatePolicyManager;
+  UpdatePolicyManager mUpdatePolicyManager;
 
   // DPL
   o2::framework::Inputs mInputs;

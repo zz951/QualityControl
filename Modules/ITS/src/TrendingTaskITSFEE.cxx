@@ -22,9 +22,9 @@
 #include "QualityControl/MonitorObject.h"
 #include "QualityControl/QcInfoLogger.h"
 #include "QualityControl/Reductor.h"
+#include "QualityControl/ReductorTObject.h"
 #include "QualityControl/ObjectMetadataKeys.h"
 
-#include <TList.h>
 #include <TObject.h>
 #include <TLegendEntry.h>
 #include <TCanvas.h>
@@ -33,8 +33,6 @@
 #include <TMultiGraph.h>
 #include <TFile.h>
 #include <TDatime.h>
-#include <map>
-#include <string>
 #include <TTreeReader.h>
 #include <TTreeReaderValue.h>
 #include <TTreeReaderArray.h>
@@ -117,8 +115,10 @@ void TrendingTaskITSFEE::trendValues(const Trigger& t, repository::DatabaseInter
         nEntries = (Int_t)mTrend->GetEntriesFast() + 1;
       }
       TObject* obj = mo ? mo->getObject() : nullptr;
-      if (obj)
-        mReductors[dataSource.name]->update(obj);
+      auto reductor = dynamic_cast<ReductorTObject*>(mReductors[dataSource.name].get());
+      if (obj && reductor) {
+        reductor->update(obj);
+      }
     } else {
       ILOG(Debug, Devel) << "Unknown type of data source '" << dataSource.type << "'." << ENDM;
     }

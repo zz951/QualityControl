@@ -16,7 +16,10 @@
 
 #include "ITS/ITSDecodingErrorTask.h"
 #include "ITSMFTReconstruction/DecodingStat.h"
+#include "QualityControl/QcInfoLogger.h"
 #include <Framework/InputRecord.h>
+#include "Common/TH1Ratio.h"
+#include "Common/Utils.h"
 
 using namespace o2::framework;
 using namespace o2::itsmft;
@@ -36,7 +39,7 @@ ITSDecodingErrorTask::~ITSDecodingErrorTask()
   delete mChipErrorPlots;
   delete mLinkErrorVsFeeid;
   delete mChipErrorVsFeeid;
-  for (int ilayer = 0; ilayer < 7; ilayer++) {
+  for (int ilayer = 0; ilayer < NLayer; ilayer++) {
     delete mChipErrorVsChipid[ilayer];
   }
 }
@@ -51,30 +54,43 @@ void ITSDecodingErrorTask::initialize(o2::framework::InitContext& /*ctx*/)
 
 void ITSDecodingErrorTask::createDecodingPlots()
 {
-  mLinkErrorVsFeeid = new TH2D("General/LinkErrorVsFeeid", "GBTLink errors per FeeId", NFees, 0, NFees, o2::itsmft::GBTLinkDecodingStat::NErrorsDefined, 0.5, o2::itsmft::GBTLinkDecodingStat::NErrorsDefined + 0.5);
+  mLinkErrorVsFeeid = new TH2D("General/LinkErrorVsFeeid", "GBTLink errors per FeeId", NFees, 0, NFees, o2::itsmft::GBTLinkDecodingStat::NErrorsDefined, 0.5, (float)o2::itsmft::GBTLinkDecodingStat::NErrorsDefined + 0.5);
   mLinkErrorVsFeeid->SetMinimum(0);
   mLinkErrorVsFeeid->SetStats(0);
   getObjectsManager()->startPublishing(mLinkErrorVsFeeid);
   for (int ilayer = 0; ilayer < 7; ilayer++) {
-    mChipErrorVsChipid[ilayer] = new TH2D(Form("General/Layer%dChipErrorVsChipid", ilayer), Form("Layer%d Chip errors per FeeId", ilayer), ChipBoundary[ilayer + 1] - ChipBoundary[ilayer], 0, ChipBoundary[ilayer + 1] - ChipBoundary[ilayer], o2::itsmft::ChipStat::NErrorsDefined, 0.5, o2::itsmft::ChipStat::NErrorsDefined + 0.5);
+    mChipErrorVsChipid[ilayer] = new TH2D(Form("General/Layer%dChipErrorVsChipid", ilayer), Form("Layer%d Chip errors per FeeId", ilayer), ChipBoundary[ilayer + 1] - ChipBoundary[ilayer], 0, ChipBoundary[ilayer + 1] - ChipBoundary[ilayer], o2::itsmft::ChipStat::NErrorsDefined, 0.5, (float)o2::itsmft::ChipStat::NErrorsDefined + 0.5);
     mChipErrorVsChipid[ilayer]->SetMinimum(0);
     mChipErrorVsChipid[ilayer]->SetStats(0);
     getObjectsManager()->startPublishing(mChipErrorVsChipid[ilayer]);
   }
-  mChipErrorVsFeeid = new TH2D("General/ChipErrorVsFeeid", "Chip decoding errors per FeeId", NFees, 0, NFees, o2::itsmft::ChipStat::NErrorsDefined, 0.5, o2::itsmft::ChipStat::NErrorsDefined + 0.5);
+  mChipErrorVsFeeid = new TH2D("General/ChipErrorVsFeeid", "Chip decoding errors per FeeId", NFees, 0, NFees, o2::itsmft::ChipStat::NErrorsDefined, 0.5, (float)o2::itsmft::ChipStat::NErrorsDefined + 0.5);
   mChipErrorVsFeeid->SetMinimum(0);
   mChipErrorVsFeeid->SetStats(0);
   getObjectsManager()->startPublishing(mChipErrorVsFeeid);
-  mLinkErrorPlots = new TH1D("General/LinkErrorPlots", "GBTLink decoding Errors", o2::itsmft::GBTLinkDecodingStat::NErrorsDefined, 0.5, o2::itsmft::GBTLinkDecodingStat::NErrorsDefined + 0.5);
+  mLinkErrorPlots = new TH1D("General/LinkErrorPlots", "GBTLink decoding Errors", o2::itsmft::GBTLinkDecodingStat::NErrorsDefined, 0.5, (float)o2::itsmft::GBTLinkDecodingStat::NErrorsDefined + 0.5);
   mLinkErrorPlots->SetMinimum(0);
   mLinkErrorPlots->SetStats(0);
-  mLinkErrorPlots->SetFillColor(kRed);
+  mLinkErrorPlots->SetFillColor(kOrange);
   getObjectsManager()->startPublishing(mLinkErrorPlots); // mLinkErrorPlots
-  mChipErrorPlots = new TH1D("General/ChipErrorPlots", "Chip Decoding Errors", o2::itsmft::ChipStat::NErrorsDefined, 0.5, o2::itsmft::ChipStat::NErrorsDefined + 0.5);
+  mChipErrorPlots = new TH1D("General/ChipErrorPlots", "Chip Decoding Errors", o2::itsmft::ChipStat::NErrorsDefined, 0.5, (float)o2::itsmft::ChipStat::NErrorsDefined + 0.5);
   mChipErrorPlots->SetMinimum(0);
   mChipErrorPlots->SetStats(0);
-  mChipErrorPlots->SetFillColor(kRed);
+  mChipErrorPlots->SetFillColor(kOrange);
   getObjectsManager()->startPublishing(mChipErrorPlots); // mChipErrorPlots
+
+  hAlwaysBusy = new TH1D("AlwaysBusyChips", "Number of Chips always in BUSY state", 11, 0, 11);
+  setAxisTitle(hAlwaysBusy, "Layer", "Counts");
+  getObjectsManager()->startPublishing(hAlwaysBusy);
+
+  hBusyFraction = std::make_unique<TH1FRatio>("FractionOfBusyChips", "Fraction of chips in BUSY, excluding permanent", 11, 0, 11, false);
+  setAxisTitle(hBusyFraction.get(), "Layer", "BusyViolations / TF / NChips");
+  getObjectsManager()->startPublishing(hBusyFraction.get());
+
+  for (int iBin = 1; iBin <= 11; iBin++) {
+    hAlwaysBusy->GetXaxis()->SetBinLabel(iBin, LayerBinLabels[iBin - 1]);
+    hBusyFraction->GetXaxis()->SetBinLabel(iBin, LayerBinLabels[iBin - 1]);
+  }
 }
 
 void ITSDecodingErrorTask::setAxisTitle(TH1* object, const char* xTitle, const char* yTitle)
@@ -113,12 +129,6 @@ void ITSDecodingErrorTask::startOfCycle() { ILOG(Debug, Devel) << "startOfCycle"
 
 void ITSDecodingErrorTask::monitorData(o2::framework::ProcessingContext& ctx)
 {
-  // set timer
-  //
-  std::chrono::time_point<std::chrono::high_resolution_clock> start;
-  std::chrono::time_point<std::chrono::high_resolution_clock> end;
-  // int difference;
-  start = std::chrono::high_resolution_clock::now();
 
   auto linkErrors = ctx.inputs().get<gsl::span<o2::itsmft::GBTLinkDecodingStat>>("linkerrors");
   auto decErrors = ctx.inputs().get<gsl::span<o2::itsmft::ChipError>>("decerrors");
@@ -148,8 +158,8 @@ void ITSDecodingErrorTask::monitorData(o2::framework::ProcessingContext& ctx)
         if (de.getChipID() == -1) {
           continue;
         }
-        mChipErrorVsFeeid->Fill(ifee + 1, ierror + 1);
-        mChipErrorVsChipid[ilayer]->Fill(ichip + 1, ierror + 1);
+        mChipErrorVsFeeid->Fill(ifee, ierror + 1);
+        mChipErrorVsChipid[ilayer]->Fill(ichip, ierror + 1);
       }
     }
   }
@@ -161,17 +171,41 @@ void ITSDecodingErrorTask::monitorData(o2::framework::ProcessingContext& ctx)
     int feeChipError = mChipErrorVsFeeid->Integral(1, mChipErrorVsFeeid->GetXaxis()->GetNbins(), ierror + 1, ierror + 1);
     mChipErrorPlots->SetBinContent(ierror + 1, feeChipError);
   }
-
-  end = std::chrono::high_resolution_clock::now();
+  mTFCount++;
 }
 
 void ITSDecodingErrorTask::getParameters()
 {
+  mBusyViolationLimit = o2::quality_control_modules::common::getFromConfig<float>(mCustomParameters, "mBusyViolationLimit", mBusyViolationLimit);
 }
 
 void ITSDecodingErrorTask::endOfCycle()
 {
   ILOG(Debug, Devel) << "endOfCycle" << ENDM;
+  hBusyFraction->Reset();
+  hAlwaysBusy->Reset();
+
+  int binIterator = 0;
+
+  for (int iLayer = 0; iLayer < NLayer; iLayer++) {
+    for (int iChip = 1; iChip <= nChipsPerLayer[iLayer]; iChip++) {
+
+      if (iLayer > 2 && iChip == nChipsPerLayer[iLayer] / 2)
+        binIterator++; // to account for bot/top barrel
+
+      int nBusyViolations = mChipErrorVsChipid[iLayer]->GetBinContent(iChip, 1);
+      if (1. * nBusyViolations / mTFCount > mBusyViolationLimit) {
+        hAlwaysBusy->Fill(binIterator);
+        continue;
+      }
+      if (nBusyViolations > 0) {
+        hBusyFraction->getNum()->Fill(binIterator, nBusyViolations);
+      }
+    }
+    hBusyFraction->getDen()->SetBinContent(binIterator + 1, mTFCount * nChipsPerLayer[iLayer]);
+    binIterator++;
+  }
+  hBusyFraction->update();
 }
 
 void ITSDecodingErrorTask::endOfActivity(const Activity& /*activity*/)
@@ -181,6 +215,7 @@ void ITSDecodingErrorTask::endOfActivity(const Activity& /*activity*/)
 
 void ITSDecodingErrorTask::resetGeneralPlots()
 {
+  mTFCount++;
   mLinkErrorVsFeeid->Reset();
   mChipErrorVsFeeid->Reset();
   mLinkErrorPlots->Reset();
@@ -188,6 +223,9 @@ void ITSDecodingErrorTask::resetGeneralPlots()
   for (int ilayer = 0; ilayer < 7; ilayer++) {
     mChipErrorVsChipid[ilayer]->Reset();
   }
+  mTFCount = 0;
+  hBusyFraction->Reset();
+  hAlwaysBusy->Reset();
 }
 
 void ITSDecodingErrorTask::reset()

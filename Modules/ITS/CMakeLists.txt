@@ -1,5 +1,4 @@
-﻿
-# ---- Library ----
+﻿# ---- Library ----
 
 add_library(O2QcITS
             src/ITSRawTask.cxx
@@ -9,6 +8,7 @@ add_library(O2QcITS
             src/TrendingTaskITSCluster.cxx
             src/TrendingTaskITSTracks.cxx
             src/TrendingTaskConfigITS.cxx
+            src/TrendingTaskITSError.cxx
             src/TH2XlineReductor.cxx
 	          src/ReductorBinContent.cxx
             src/ITSFhrTask.cxx
@@ -63,6 +63,7 @@ add_root_dictionary(O2QcITS
 			    include/ITS/TrendingTaskITSFEE.h
                             include/ITS/TrendingTaskITSCluster.h
                             include/ITS/TrendingTaskITSTracks.h
+                            include/ITS/TrendingTaskITSError.h
                             include/ITS/TH2XlineReductor.h
 			    include/ITS/ReductorBinContent.h
                             include/ITS/ITSFhrTask.h
@@ -78,7 +79,8 @@ add_root_dictionary(O2QcITS
 			    include/ITS/ITSTrackSimTask.h 
                             include/ITS/ITSThresholdCalibrationCheck.h 
                             include/ITS/ITSDecodingErrorTask.h 
-                            include/ITS/ITSDecodingErrorCheck.h 
+                            include/ITS/ITSDecodingErrorCheck.h
+                            include/ITS/ITSHelpers.h 
                     LINKDEF include/ITS/LinkDef.h)
 
 # ---- Test(s) ----

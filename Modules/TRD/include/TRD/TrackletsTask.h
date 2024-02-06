@@ -11,7 +11,6 @@
 
 ///
 /// \file   TrackletsTask.h
-/// \author My Name
 ///
 
 #ifndef QC_MODULE_TRD_TRDTRACKLETSTASK_H
@@ -31,15 +30,11 @@ using namespace o2::quality_control::core;
 namespace o2::quality_control_modules::trd
 {
 
-/// \brief Example Quality Control DPL Task
-/// \author My Name
 class TrackletsTask final : public TaskInterface
 {
  public:
-  /// \brief Constructor
   TrackletsTask() = default;
-  /// Destructor
-  ~TrackletsTask() override;
+  ~TrackletsTask() override = default;
 
   // Definition of the methods for the template method pattern
   void initialize(o2::framework::InitContext& ctx) override;
@@ -50,46 +45,26 @@ class TrackletsTask final : public TaskInterface
   void endOfActivity(const Activity& activity) override;
   void reset() override;
   void buildHistograms();
-  void retrieveCCDBSettings();
-  void drawLinesMCM(TH2F* histo);
-  void drawTrdLayersGrid(TH2F* hist);
-  void buildTrackletLayers();
-  void drawHashedOnHistsPerLayer(int layer); //, int hcid, int rowstart, int rowend);
-  void drawHashOnLayers(int layer, int hcid, int rowstart, int rowend);
 
  private:
-  long int mTimestamp;
-  bool mLayerLabelsIgnore = false;
-  std::array<TH2F*, 18> moHCMCM;
-  std::array<TH1F*, 18> mTrackletQ0perSector;
-  std::array<TH1F*, 18> mTrackletQ1perSector;
-  std::array<TH1F*, 18> mTrackletQ2perSector;
-  std::array<TH1F*, 3> mTrackletQ;
-  TH1F* mTrackletSlope = nullptr;
-  TH1F* mTrackletSlopeRaw = nullptr;
-  TH1F* mTrackletHCID = nullptr;
-  TH1F* mTrackletPosition = nullptr;
-  TH1F* mTrackletPositionRaw = nullptr;
-  TH1F* mTrackletsPerEvent = nullptr;
-  TH2F* mTrackletsPerHC2D = nullptr;
-  std::array<TH2F*, 18> moHCMCMn;
-  TH1F* mTrackletSlopen = nullptr;
-  TH1F* mTrackletSlopeRawn = nullptr;
-  TH1F* mTrackletHCIDn = nullptr;
-  TH1F* mTrackletPositionn = nullptr;
-  TH1F* mTrackletPositionRawn = nullptr;
-  TH1F* mTrackletsPerEventn = nullptr;
-  TH1F* mTrackletsPerTimeFrame = nullptr;
-  TH1F* mTriggersPerTimeFrame = nullptr;
-  TH1F* mTrackletsPerTimeFrameCycled = nullptr;
-  std::array<TH2F*, 6> mLayers;
-
-  int mMarkerSize;
-  int mMarkerStyle;
+  // settings
+  bool mRemoveNoise{ false };
+  // histograms
+  std::array<std::shared_ptr<TH1F>, 3> mTrackletQ;
+  std::shared_ptr<TH1F> mTrackletSlope = nullptr;
+  std::shared_ptr<TH1F> mTrackletHCID = nullptr;
+  std::shared_ptr<TH1F> mTrackletPosition = nullptr;
+  std::shared_ptr<TH1F> mTrackletsPerEvent = nullptr;
+  std::shared_ptr<TH1F> mTrackletsPerEventPP = nullptr;
+  std::shared_ptr<TH1F> mTrackletsPerEventPbPb = nullptr;
+  std::shared_ptr<TH2F> mTrackletsPerHC2D = nullptr;
+  std::shared_ptr<TH1F> mTrackletsPerTimeFrame = nullptr;
+  std::shared_ptr<TH1F> mTriggersPerTimeFrame = nullptr;
+  std::array<std::shared_ptr<TH2F>, o2::trd::constants::NLAYER> mLayers;
 
   // data to pull from CCDB
-  o2::trd::NoiseStatusMCM* mNoiseMap = nullptr;
-  o2::trd::HalfChamberStatusQC* mChamberStatus = nullptr;
+  const o2::trd::NoiseStatusMCM* mNoiseMap = nullptr;
+  const std::array<int, o2::trd::constants::MAXCHAMBER>* mChamberStatus = nullptr;
 };
 
 } // namespace o2::quality_control_modules::trd

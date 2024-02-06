@@ -17,13 +17,9 @@
 #include "QualityControl/MonitorObject.h"
 
 #include <iostream>
-#include <utility>
-#include <Common/Exceptions.h>
 #include "QualityControl/RepoPathUtils.h"
 
-ClassImp(o2::quality_control::core::MonitorObject)
-
-  using namespace std;
+using namespace std;
 
 namespace o2::quality_control::core
 {
@@ -177,6 +173,16 @@ const string& MonitorObject::getTaskClass() const
 void MonitorObject::setTaskClass(const string& taskClass)
 {
   MonitorObject::mTaskClass = taskClass;
+}
+
+void MonitorObject::setCreateMovingWindow(bool flag)
+{
+  mCreateMovingWindow = flag;
+}
+
+bool MonitorObject::getCreateMovingWindow() const
+{
+  return mCreateMovingWindow;
 }
 
 } // namespace o2::quality_control::core

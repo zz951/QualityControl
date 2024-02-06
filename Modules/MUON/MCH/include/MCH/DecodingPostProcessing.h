@@ -22,26 +22,13 @@
 #include "QualityControl/PostProcessingInterface.h"
 
 #include "MCH/Helpers.h"
-#include "MUONCommon/MergeableTH2Ratio.h"
+#include "Common/TH2Ratio.h"
 #include "MCH/HistoOnCycle.h"
 #include "MCH/DecodingErrorsPlotter.h"
 #include "MCH/HeartBeatPacketsPlotter.h"
 #include "MCH/FECSyncStatusPlotter.h"
 
-#include "MCHRawCommon/DataFormats.h"
-#include "MCHRawElecMap/Mapper.h"
-
 #include <memory>
-#include <unordered_map>
-#include <TCanvas.h>
-
-class TH1F;
-class TProfile;
-
-namespace o2::quality_control::core
-{
-class Activity;
-}
 
 namespace o2::quality_control::repository
 {
@@ -50,7 +37,7 @@ class DatabaseInterface;
 
 using namespace o2::quality_control;
 using namespace o2::quality_control::postprocessing;
-using namespace o2::quality_control_modules::muon;
+using namespace o2::quality_control_modules::common;
 
 namespace o2::quality_control_modules::muonchambers
 {
@@ -95,9 +82,9 @@ class DecodingPostProcessing : public PostProcessingInterface
   // Decoding errors histograms ===============================================
 
   // On-cycle plots generators
-  std::unique_ptr<HistoOnCycle<MergeableTH2Ratio>> mErrorsOnCycle;
-  std::unique_ptr<HistoOnCycle<MergeableTH2Ratio>> mHBPacketsOnCycle;
-  std::unique_ptr<HistoOnCycle<MergeableTH2Ratio>> mSyncStatusOnCycle;
+  std::unique_ptr<HistoOnCycle<TH2FRatio>> mErrorsOnCycle;
+  std::unique_ptr<HistoOnCycle<TH2FRatio>> mHBPacketsOnCycle;
+  std::unique_ptr<HistoOnCycle<TH2FRatio>> mSyncStatusOnCycle;
   // Plotters and histograms
   std::unique_ptr<DecodingErrorsPlotter> mErrorsPlotter;
   std::unique_ptr<DecodingErrorsPlotter> mErrorsPlotterOnCycle;

@@ -38,7 +38,10 @@
                 "taskParameters": {
                     "NPayloadSizeBins": "4096",
                     "ResetLaneStatus": "1",
-                    "ResetPayload": "0"
+                    "ResetPayload": "0",
+		    "EnableIHWReading": "1",
+		    "PayloadParsingEvery_n_HBFperTF": "0",
+		    "PayloadParsingEvery_n_TF": "1"
                 }
             }
         },
@@ -52,10 +55,13 @@
                 "checkParameters": {
                   "skipbinstrg": "",
                   "skipfeeids": "",
-                  "maxbadchipsIB": "2",
+                  "maxTFdifferenceAllowed": "1000000000",
+		  "maxbadchipsIB": "2",
                   "maxbadlanesML": "4",
                   "maxbadlanesOL": "7",
+		  "minPayloadSize": "1400",
                   "maxfractionbadlanes": "0.1",
+		  "expectedROFperOrbit": "18",
                   "plotWithTextMessage": "",
                   "textMessage": "" 
                 },
@@ -67,13 +73,13 @@
                             "LaneStatus/laneStatusFlagFAULT",
                             "LaneStatus/laneStatusFlagERROR",
                             "LaneStatus/laneStatusFlagWARNING",
-                            "LaneStatus/laneStatusOverviewFlagFAULT",
                             "LaneStatus/laneStatusOverviewFlagERROR",
                             "LaneStatus/laneStatusOverviewFlagWARNING",
                             "LaneStatusSummary/LaneStatusSummaryGlobal",
                             "RDHSummary",
                             "TriggerVsFeeid",
-                            "PayloadSize"
+                            "PayloadSize",
+			    "TrailerCount"
                         ]
                     }
                 ]

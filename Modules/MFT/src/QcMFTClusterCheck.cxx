@@ -16,6 +16,8 @@
 /// \author Katarina Krizkova Gajdosova
 /// \author Diana Maria Krupova
 
+// C++
+#include <string>
 // Fair
 #include <fairlogger/Logger.h>
 // ROOT
@@ -24,10 +26,20 @@
 #include <TLatex.h>
 #include <TList.h>
 #include <TPaveText.h>
+#include <TBox.h>
+#include <TPad.h>
+#include <TCanvas.h>
+// O2
+#include <DataFormatsITSMFT/NoiseMap.h>
+#include <ITSMFTReconstruction/ChipMappingMFT.h>
+
 // Quality Control
 #include "MFT/QcMFTClusterCheck.h"
 #include "QualityControl/MonitorObject.h"
 #include "QualityControl/Quality.h"
+#include "QualityControl/QcInfoLogger.h"
+#include "MFT/QcMFTUtilTables.h"
+#include "QualityControl/UserCodeInterface.h"
 
 using namespace std;
 
@@ -46,6 +58,9 @@ void QcMFTClusterCheck::configure()
     ILOG(Info, Support) << "Custom parameter - ZoneThresholdBad: " << param->second << ENDM;
     mZoneThresholdBad = stoi(param->second);
   }
+
+  // no call to beautifier yet
+  mFirstCall = true;
 }
 
 Quality QcMFTClusterCheck::check(std::map<std::string, std::shared_ptr<MonitorObject>>* moMap)
@@ -140,8 +155,110 @@ Quality QcMFTClusterCheck::check(std::map<std::string, std::shared_ptr<MonitorOb
 
 std::string QcMFTClusterCheck::getAcceptedType() { return "TH1"; }
 
+void QcMFTClusterCheck::readMaskedChips(std::shared_ptr<MonitorObject> mo)
+{
+  long timestamp = mo->getValidity().getMin();
+  map<string, string> headers;
+  map<std::string, std::string> filter;
+  auto calib = UserCodeInterface::retrieveConditionAny<o2::itsmft::NoiseMap>("MFT/Calib/DeadMap/", filter, timestamp);
+  for (int i = 0; i < calib->size(); i++) {
+    if (calib->isFullChipMasked(i)) {
+      mMaskedChips.push_back(i);
+    }
+  }
+}
+
+void QcMFTClusterCheck::getChipMapData()
+{
+  const o2::itsmft::ChipMappingMFT mapMFT;
+  auto chipMapData = mapMFT.getChipMappingData();
+  QcMFTUtilTables MFTTable;
+
+  for (int i = 0; i < 936; i++) {
+    mHalf[i] = chipMapData[i].half;
+    mDisk[i] = chipMapData[i].disk;
+    mLayer[i] = chipMapData[i].layer;
+    mFace[i] = mLayer[i] % 2;
+    mZone[i] = chipMapData[i].zone;
+    mSensor[i] = chipMapData[i].localChipSWID;
+    mTransID[i] = chipMapData[i].cable;
+    mLadder[i] = MFTTable.mLadder[i];
+    mX[i] = MFTTable.mX[i];
+    mY[i] = MFTTable.mY[i];
+  }
+}
+
+void QcMFTClusterCheck::createMaskedChipsNames()
+{
+  for (int i = 0; i < mMaskedChips.size(); i++) {
+    mChipMapName.push_back(Form("ChipOccupancyMaps/Half_%d/Disk_%d/Face_%d/mClusterChipOccupancyMap",
+                                mHalf[mMaskedChips[i]], mDisk[mMaskedChips[i]], mFace[mMaskedChips[i]]));
+  }
+}
+
+void QcMFTClusterCheck::createOutsideAccNames()
+{
+  for (int iHalf = 0; iHalf < 2; iHalf++) {
+    for (int iDisk = 0; iDisk < 5; iDisk++) {
+      for (int iFace = 0; iFace < 2; iFace++) {
+        mOutsideAccName.push_back(Form("ChipOccupancyMaps/Half_%d/Disk_%d/Face_%d/mClusterChipOccupancyMap",
+                                       iHalf, iDisk, iFace));
+      }
+    }
+  }
+}
+
 void QcMFTClusterCheck::beautify(std::shared_ptr<MonitorObject> mo, Quality checkResult)
 {
+  // set up masking of dead chips once
+  if (mFirstCall) {
+    mFirstCall = false;
+    readMaskedChips(mo);
+    getChipMapData();
+    createMaskedChipsNames();
+    createOutsideAccNames();
+  }
+  // print skull in maps to display dead chips
+  int nMaskedChips = mMaskedChips.size();
+  for (int i = 0; i < nMaskedChips; i++) {
+    if (mo->getName().find(mChipMapName[i]) != std::string::npos) {
+      auto* hMap = dynamic_cast<TH2F*>(mo->getObject());
+      int binCx = hMap->GetXaxis()->FindBin(mX[mMaskedChips[i]]);
+      int binCy = hMap->GetYaxis()->FindBin(mY[mMaskedChips[i]]);
+      // the -0.5 is a shift to centre better the skulls
+      TLatex* tl = new TLatex(hMap->GetXaxis()->GetBinCenter(binCx) - 0.5, hMap->GetYaxis()->GetBinCenter(binCy), "N");
+      tl->SetTextFont(142);
+      tl->SetTextSize(0.08);
+      hMap->GetListOfFunctions()->Add(tl);
+      tl->Draw();
+    }
+  }
+
+  QcMFTUtilTables MFTTable;
+  for (int iHalf = 0; iHalf < 2; iHalf++) {
+    for (int iDisk = 0; iDisk < 5; iDisk++) {
+      for (int iFace = 0; iFace < 2; iFace++) {
+        int idx = (iDisk * 2 + iFace) + (10 * iHalf);
+        if (mo->getName().find(mOutsideAccName[idx]) != std::string::npos) {
+          // LOGF(info, "Name: %s", mo->getName());
+          auto* h = dynamic_cast<TH2F*>(mo->getObject());
+          // TBox *b = new TBox();
+          for (int i = 0; i < 21; i++) {
+            int binX = MFTTable.mBinX[idx][i];
+            int binY = MFTTable.mBinY[idx][i];
+            if (binX == -1 || binY == -1)
+              continue;
+            TBox* b = new TBox(h->GetXaxis()->GetBinLowEdge(binX), h->GetYaxis()->GetBinLowEdge(binY), h->GetXaxis()->GetBinWidth(binX) + h->GetXaxis()->GetBinLowEdge(binX), h->GetYaxis()->GetBinWidth(binY) + h->GetYaxis()->GetBinLowEdge(binY));
+            b->SetFillStyle(4055);
+            b->SetFillColor(15);
+            h->GetListOfFunctions()->Add(b);
+            b->Draw();
+          }
+        }
+      }
+    }
+  }
+
   if (mo->getName().find("mClusterOccupancySummary") != std::string::npos) {
     auto* hOccupancySummary = dynamic_cast<TH2F*>(mo->getObject());
     TPaveText* msg1 = new TPaveText(0.05, 0.9, 0.35, 1.0, "NDC NB");

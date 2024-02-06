@@ -12,6 +12,7 @@
 ///
 /// \file   RawDataQcTask.cxx
 /// \author Marek Bombara
+/// \author Lucia Anna Tarasovicova
 ///
 
 #include <TCanvas.h>
@@ -23,29 +24,33 @@
 #include "Headers/RAWDataHeader.h"
 #include "DPLUtils/DPLRawParser.h"
 #include "DataFormatsCTP/Digits.h"
+#include "DataFormatsCTP/Configuration.h"
+#include "DataFormatsCTP/RunManager.h"
 #include <Framework/InputRecord.h>
 #include <Framework/InputRecordWalker.h>
+#include "Framework/TimingInfo.h"
 
 namespace o2::quality_control_modules::ctp
 {
 
 CTPRawDataReaderTask::~CTPRawDataReaderTask()
 {
-  delete mHistoBC;
   delete mHistoInputs;
   delete mHistoClasses;
+  delete mHistoMTVXBC;
 }
 
 void CTPRawDataReaderTask::initialize(o2::framework::InitContext& /*ctx*/)
 {
   ILOG(Debug, Devel) << "initialize CTPRawDataReaderTask" << ENDM; // QcInfoLogger is used. FairMQ logs will go to there as well.
 
-  mHistoBC = new TH1F("histobc", "BC distribution", 3564, 0, 3564);
   mHistoInputs = new TH1F("inputs", "Inputs distribution", 48, 0, 48);
   mHistoClasses = new TH1F("classes", "Classes distribution", 64, 0, 64);
-  getObjectsManager()->startPublishing(mHistoBC);
+  mHistoMTVXBC = new TH1F("bcMTVX", "BC position of MTVX", 3564, 0, 3564);
   getObjectsManager()->startPublishing(mHistoInputs);
   getObjectsManager()->startPublishing(mHistoClasses);
+  getObjectsManager()->startPublishing(mHistoMTVXBC);
+
   mDecoder.setDoLumi(1);
   mDecoder.setDoDigits(1);
 }
@@ -53,9 +58,9 @@ void CTPRawDataReaderTask::initialize(o2::framework::InitContext& /*ctx*/)
 void CTPRawDataReaderTask::startOfActivity(const Activity& activity)
 {
   ILOG(Debug, Devel) << "startOfActivity " << activity.mId << ENDM;
-  mHistoBC->Reset();
   mHistoInputs->Reset();
   mHistoClasses->Reset();
+  mHistoMTVXBC->Reset();
 }
 
 void CTPRawDataReaderTask::startOfCycle()
@@ -70,24 +75,27 @@ void CTPRawDataReaderTask::monitorData(o2::framework::ProcessingContext& ctx)
   std::vector<o2::framework::InputSpec> filter;
   std::vector<o2::ctp::LumiInfo> lumiPointsHBF1;
   std::vector<o2::ctp::CTPDigit> outputDigits;
-  mDecoder.decodeRaw(ctx.inputs(), filter, outputDigits, lumiPointsHBF1);
+
+  o2::framework::InputRecord& inputs = ctx.inputs();
+  mDecoder.decodeRaw(inputs, filter, outputDigits, lumiPointsHBF1);
+
+  std::string nameInput = "MTVX";
+  auto indexTvx = o2::ctp::CTPInputsConfiguration::getInputIndexFromName(nameInput);
 
   for (auto const digit : outputDigits) {
     uint16_t bcid = digit.intRecord.bc;
-    // LOG(info) << "bcid = " << bcid;
-    mHistoBC->Fill(bcid);
     if (digit.CTPInputMask.count()) {
       for (int i = 0; i < o2::ctp::CTP_NINPUTS; i++) {
         if (digit.CTPInputMask[i]) {
-          // LOG(info) << "i of input = " << i;
           mHistoInputs->Fill(i);
+          if (i == indexTvx - 1)
+            mHistoMTVXBC->Fill(bcid);
         }
       }
     }
     if (digit.CTPClassMask.count()) {
       for (int i = 0; i < o2::ctp::CTP_NCLASSES; i++) {
         if (digit.CTPClassMask[i]) {
-          // LOG(info) << "i of class = " << i;
           mHistoClasses->Fill(i);
         }
       }
@@ -110,9 +118,9 @@ void CTPRawDataReaderTask::reset()
   // clean all the monitor objects here
 
   ILOG(Debug, Devel) << "Resetting the histograms" << ENDM;
-  mHistoBC->Reset();
   mHistoInputs->Reset();
   mHistoClasses->Reset();
+  mHistoMTVXBC->Reset();
 }
 
 } // namespace o2::quality_control_modules::ctp

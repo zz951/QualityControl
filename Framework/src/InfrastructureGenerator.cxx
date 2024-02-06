@@ -84,7 +84,7 @@ framework::WorkflowSpec InfrastructureGenerator::generateStandaloneInfrastructur
 {
   printVersion();
 
-  auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configurationTree);
+  auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configurationTree, WorkflowType::Standalone);
   // todo: report the number of tasks/checks/etc once all are read there.
 
   WorkflowSpec workflow;
@@ -111,11 +111,64 @@ void InfrastructureGenerator::generateStandaloneInfrastructure(framework::Workfl
   workflow.insert(std::end(workflow), std::begin(qcInfrastructure), std::end(qcInfrastructure));
 }
 
+framework::WorkflowSpec InfrastructureGenerator::generateFullChainInfrastructure(const ptree& configurationTree)
+{
+  printVersion();
+
+  auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configurationTree, WorkflowType::FullChain);
+  WorkflowSpec workflow;
+
+  for (const auto& taskSpec : infrastructureSpec.tasks) {
+    if (!taskSpec.active) {
+      ILOG(Info, Devel) << "Task " << taskSpec.taskName << " is disabled, ignoring." << ENDM;
+      continue;
+    }
+
+    if (taskSpec.location == TaskLocationSpec::Local) {
+      // If we use delta mergers, then the moving window is implemented by the last Merger layer.
+      // The QC Tasks should always send a delta covering one cycle.
+      auto taskConfig = TaskRunnerFactory::extractConfig(infrastructureSpec.common, taskSpec, 1, TaskRunnerFactory::computeResetAfterCycles(taskSpec, true));
+      // Generate QC Task Runner
+      workflow.emplace_back(TaskRunnerFactory::create(taskConfig));
+
+      // In "delta" mode Mergers should implement moving window, in "entire" - QC Tasks.
+      size_t resetAfterCycles = taskSpec.mergingMode == "delta" ? taskSpec.resetAfterCycles : 0;
+      std::vector<std::pair<size_t, size_t>> cycleDurationsMultiplied;
+      if (taskSpec.cycleDurationSeconds > 0) { // old, simple, style
+        cycleDurationsMultiplied = { { taskSpec.cycleDurationSeconds, 1 } };
+      } else { // new style
+        cycleDurationsMultiplied = taskSpec.multipleCycleDurations;
+      }
+      std::for_each(cycleDurationsMultiplied.begin(), cycleDurationsMultiplied.end(),
+                    [taskSpec](std::pair<size_t, size_t>& p) { p.first *= taskSpec.mergerCycleMultiplier; });
+      bool enableMovingWindows = !taskSpec.movingWindows.empty();
+      generateMergers(workflow, taskSpec.taskName, 1, cycleDurationsMultiplied,
+                      taskSpec.mergingMode, resetAfterCycles, infrastructureSpec.common.monitoringUrl,
+                      taskSpec.detectorName, taskSpec.mergersPerLayer, enableMovingWindows, taskSpec.critical);
+    } else { // TaskLocationSpec::Remote
+      auto taskConfig = TaskRunnerFactory::extractConfig(infrastructureSpec.common, taskSpec, 0, taskSpec.resetAfterCycles);
+      workflow.emplace_back(TaskRunnerFactory::create(taskConfig));
+    }
+  }
+
+  generateCheckRunners(workflow, infrastructureSpec);
+  generateAggregator(workflow, infrastructureSpec);
+  generatePostProcessing(workflow, infrastructureSpec);
+
+  return workflow;
+}
+
+void InfrastructureGenerator::generateFullChainInfrastructure(WorkflowSpec& workflow, const ptree& configurationTree)
+{
+  auto qcInfrastructure = InfrastructureGenerator::generateFullChainInfrastructure(configurationTree);
+  workflow.insert(std::end(workflow), std::begin(qcInfrastructure), std::end(qcInfrastructure));
+}
+
 WorkflowSpec InfrastructureGenerator::generateLocalInfrastructure(const boost::property_tree::ptree& configurationTree, const std::string& targetHost)
 {
   printVersion();
 
-  auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configurationTree);
+  auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configurationTree, WorkflowType::Local);
 
   WorkflowSpec workflow;
   std::set<DataSamplingPolicySpec> samplingPoliciesForRemoteTasks;
@@ -194,7 +247,7 @@ o2::framework::WorkflowSpec InfrastructureGenerator::generateRemoteInfrastructur
 {
   printVersion();
 
-  auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configurationTree);
+  auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configurationTree, WorkflowType::Remote);
 
   WorkflowSpec workflow;
   std::set<DataSamplingPolicySpec> samplingPoliciesForRemoteTasks;
@@ -223,8 +276,9 @@ o2::framework::WorkflowSpec InfrastructureGenerator::generateRemoteInfrastructur
       }
       std::for_each(cycleDurationsMultiplied.begin(), cycleDurationsMultiplied.end(),
                     [taskSpec](std::pair<size_t, size_t>& p) { p.first *= taskSpec.mergerCycleMultiplier; });
+      bool enableMovingWindows = !taskSpec.movingWindows.empty();
       generateMergers(workflow, taskSpec.taskName, numberOfLocalMachines, cycleDurationsMultiplied, taskSpec.mergingMode,
-                      resetAfterCycles, infrastructureSpec.common.monitoringUrl, taskSpec.detectorName, taskSpec.mergersPerLayer);
+                      resetAfterCycles, infrastructureSpec.common.monitoringUrl, taskSpec.detectorName, taskSpec.mergersPerLayer, enableMovingWindows, taskSpec.critical);
 
     } else if (taskSpec.location == TaskLocationSpec::Remote) {
 
@@ -282,7 +336,7 @@ framework::WorkflowSpec InfrastructureGenerator::generateLocalBatchInfrastructur
 {
   printVersion();
 
-  auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configurationTree);
+  auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configurationTree, WorkflowType::LocalBatch);
   std::vector<InputSpec> fileSinkInputs;
 
   WorkflowSpec workflow;
@@ -294,7 +348,7 @@ framework::WorkflowSpec InfrastructureGenerator::generateLocalBatchInfrastructur
       auto taskConfig = TaskRunnerFactory::extractConfig(infrastructureSpec.common, taskSpec, 0, 1);
       workflow.emplace_back(TaskRunnerFactory::create(taskConfig));
 
-      fileSinkInputs.emplace_back(taskSpec.taskName, TaskRunner::createTaskDataOrigin(taskSpec.detectorName), TaskRunner::createTaskDataDescription(taskSpec.taskName));
+      fileSinkInputs.emplace_back(taskSpec.taskName, TaskRunner::createTaskDataOrigin(taskSpec.detectorName), TaskRunner::createTaskDataDescription(taskSpec.taskName), Lifetime::Sporadic);
     }
   }
 
@@ -322,7 +376,7 @@ framework::WorkflowSpec InfrastructureGenerator::generateRemoteBatchInfrastructu
 {
   printVersion();
 
-  auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configurationTree);
+  auto infrastructureSpec = InfrastructureSpecReader::readInfrastructureSpec(configurationTree, WorkflowType::RemoteBatch);
 
   WorkflowSpec workflow;
 
@@ -332,6 +386,13 @@ framework::WorkflowSpec InfrastructureGenerator::generateRemoteBatchInfrastructu
       auto taskConfig = TaskRunnerFactory::extractConfig(infrastructureSpec.common, taskSpec, 0, 1);
       fileSourceOutputs.push_back(taskConfig.moSpec);
       fileSourceOutputs.back().binding = RootFileSource::outputBinding(taskSpec.detectorName, taskSpec.taskName);
+      // We create an OutputSpec for moving windows for this task only if they are expected.
+      if (!taskConfig.movingWindows.empty()) {
+        fileSourceOutputs.push_back(
+          { RootFileSource::outputBinding(taskSpec.detectorName, taskSpec.taskName, true),
+            TaskRunner::createTaskDataOrigin(taskSpec.detectorName, true),
+            TaskRunner::createTaskDataDescription(taskSpec.taskName), 0, Lifetime::Sporadic });
+      }
     }
   }
   if (!fileSourceOutputs.empty()) {
@@ -478,7 +539,7 @@ void InfrastructureGenerator::generateLocalTaskLocalProxy(framework::WorkflowSpe
   std::string remotePort = std::to_string(taskSpec.remotePort);
   std::string proxyName = taskSpec.detectorName + "-" + taskName + "-proxy";
   std::string channelName = taskSpec.detectorName + "-" + taskName + "-proxy";
-  InputSpec proxyInput{ channelName, TaskRunner::createTaskDataOrigin(taskSpec.detectorName), TaskRunner::createTaskDataDescription(taskName), static_cast<SubSpec>(id), Lifetime::Sporadic };
+  InputSpec proxyInput{ channelName, TaskRunner::createTaskDataOrigin(taskSpec.detectorName, false), TaskRunner::createTaskDataDescription(taskName), static_cast<SubSpec>(id), Lifetime::Sporadic };
   std::string channelConfig = "name=" + channelName + ",type=pub,method=connect,address=tcp://" +
                               taskSpec.remoteMachine + ":" + remotePort + ",rateLogging=60,transport=zeromq,sndBufSize=4";
 
@@ -488,6 +549,9 @@ void InfrastructureGenerator::generateLocalTaskLocalProxy(framework::WorkflowSpe
       { proxyInput },
       channelConfig.c_str()));
   workflow.back().labels.emplace_back(taskSpec.localControl == "odc" ? ecs::preserveRawChannelsLabel : ecs::uniqueProxyLabel);
+  if (!taskSpec.critical) {
+    workflow.back().labels.emplace_back(framework::DataProcessorLabel{ "expendable" });
+  }
   if (getenv("O2_QC_KILL_PROXIES") != nullptr) {
     workflow.back().metadata.push_back(DataProcessorMetadata{ ecs::privateMemoryKillThresholdMB, proxyMemoryKillThresholdMB });
   }
@@ -503,7 +567,7 @@ void InfrastructureGenerator::generateLocalTaskRemoteProxy(framework::WorkflowSp
   Outputs proxyOutputs;
   for (size_t id = 1; id <= numberOfLocalMachines; id++) {
     proxyOutputs.emplace_back(
-      OutputSpec{ { channelName }, TaskRunner::createTaskDataOrigin(taskSpec.detectorName), TaskRunner::createTaskDataDescription(taskName), static_cast<SubSpec>(id), Lifetime::Sporadic });
+      OutputSpec{ { channelName }, TaskRunner::createTaskDataOrigin(taskSpec.detectorName, false), TaskRunner::createTaskDataDescription(taskName), static_cast<SubSpec>(id), Lifetime::Sporadic });
   }
 
   std::string channelConfig = "name=" + channelName + ",type=sub,method=bind,address=tcp://*:" + remotePort +
@@ -515,6 +579,9 @@ void InfrastructureGenerator::generateLocalTaskRemoteProxy(framework::WorkflowSp
     channelConfig.c_str(),
     dplModelAdaptor());
   proxy.labels.emplace_back(taskSpec.localControl == "odc" ? ecs::preserveRawChannelsLabel : ecs::uniqueProxyLabel);
+  if (!taskSpec.critical) {
+    proxy.labels.emplace_back(framework::DataProcessorLabel{ "expendable" });
+  }
   // if not in RUNNING, we should drop all the incoming messages, we set the corresponding proxy option.
   enableDraining(proxy.options);
   if (getenv("O2_QC_KILL_PROXIES") != nullptr) {
@@ -525,13 +592,13 @@ void InfrastructureGenerator::generateLocalTaskRemoteProxy(framework::WorkflowSp
 void InfrastructureGenerator::generateMergers(framework::WorkflowSpec& workflow, const std::string& taskName,
                                               size_t numberOfLocalMachines, std::vector<std::pair<size_t, size_t>> cycleDurations,
                                               const std::string& mergingMode, size_t resetAfterCycles, std::string monitoringUrl,
-                                              const std::string& detectorName, std::vector<size_t> mergersPerLayer)
+                                              const std::string& detectorName, std::vector<size_t> mergersPerLayer, bool enableMovingWindows, bool critical)
 {
   Inputs mergerInputs;
   for (size_t id = 1; id <= numberOfLocalMachines; id++) {
     mergerInputs.emplace_back(
       InputSpec{ { taskName + std::to_string(id) },
-                 TaskRunner::createTaskDataOrigin(detectorName),
+                 TaskRunner::createTaskDataOrigin(detectorName, false),
                  TaskRunner::createTaskDataDescription(taskName),
                  static_cast<SubSpec>(id),
                  Lifetime::Sporadic });
@@ -541,7 +608,9 @@ void InfrastructureGenerator::generateMergers(framework::WorkflowSpec& workflow,
   mergersBuilder.setInfrastructureName(taskName);
   mergersBuilder.setInputSpecs(mergerInputs);
   mergersBuilder.setOutputSpec(
-    { { "main" }, TaskRunner::createTaskDataOrigin(detectorName), TaskRunner::createTaskDataDescription(taskName), 0 });
+    { { "main" }, TaskRunner::createTaskDataOrigin(detectorName, false), TaskRunner::createTaskDataDescription(taskName), 0, Lifetime::Sporadic });
+  mergersBuilder.setOutputSpecMovingWindow(
+    { { "main_mw" }, TaskRunner::createTaskDataOrigin(detectorName, true), TaskRunner::createTaskDataDescription(taskName), 0, Lifetime::Sporadic });
   MergerConfig mergerConfig;
   // if we are to change the mode to Full, disable reseting tasks after each cycle.
   mergerConfig.inputObjectTimespan = { (mergingMode.empty() || mergingMode == "delta") ? InputObjectsTimespan::LastDifference : InputObjectsTimespan::FullHistory };
@@ -551,6 +620,8 @@ void InfrastructureGenerator::generateMergers(framework::WorkflowSpec& workflow,
   mergerConfig.topologySize = { TopologySize::MergersPerLayer, mergersPerLayer };
   mergerConfig.monitoringUrl = std::move(monitoringUrl);
   mergerConfig.detectorName = detectorName;
+  mergerConfig.labels.push_back({ "resilient" });
+  mergerConfig.publishMovingWindow = { enableMovingWindows ? PublishMovingWindow::Yes : PublishMovingWindow::No };
   mergerConfig.parallelismType = { (mergerConfig.inputObjectTimespan.value == InputObjectsTimespan::LastDifference) ? ParallelismType::RoundRobin : ParallelismType::SplitInputs };
   mergersBuilder.setConfig(mergerConfig);
 
@@ -572,6 +643,13 @@ void InfrastructureGenerator::generateCheckRunners(framework::WorkflowSpec& work
     if (taskSpec.active) {
       InputSpec taskOutput{ taskSpec.taskName, TaskRunner::createTaskDataOrigin(taskSpec.detectorName), TaskRunner::createTaskDataDescription(taskSpec.taskName), Lifetime::Sporadic };
       tasksOutputMap.insert({ DataSpecUtils::label(taskOutput), taskOutput });
+      bool movingWindowsEnabled = !taskSpec.movingWindows.empty();
+      bool synchronousRemote = taskSpec.location == TaskLocationSpec::Local && (infrastructureSpec.workflowType == WorkflowType::Remote || infrastructureSpec.workflowType == WorkflowType::FullChain);
+      bool asynchronousRemote = infrastructureSpec.workflowType == WorkflowType::RemoteBatch;
+      if (movingWindowsEnabled && (synchronousRemote || asynchronousRemote)) {
+        InputSpec taskMovingWindowOutput{ taskSpec.taskName, TaskRunner::createTaskDataOrigin(taskSpec.detectorName, true), TaskRunner::createTaskDataDescription(taskSpec.taskName), Lifetime::Sporadic };
+        tasksOutputMap.insert({ DataSpecUtils::label(taskMovingWindowOutput), taskMovingWindowOutput });
+      }
     }
   }
 
@@ -664,17 +742,30 @@ void InfrastructureGenerator::generateCheckRunners(framework::WorkflowSpec& work
   ILOG(Debug, Devel) << ENDM;
 }
 
+void InfrastructureGenerator::throwIfAggNamesClashCheckNames(const InfrastructureSpec& infrastructureSpec)
+{
+  // TODO simplify with ranges when we'll start using c++20
+  std::vector<std::string> checksNames;
+  checksNames.reserve(infrastructureSpec.checks.size());
+  std::transform(infrastructureSpec.checks.begin(), infrastructureSpec.checks.end(), std::back_inserter(checksNames),
+                 [](const auto& check) { return check.checkName; });
+  for (const auto& aggregator : infrastructureSpec.aggregators) {
+    if (std::count(checksNames.begin(), checksNames.end(), aggregator.aggregatorName)) {
+      ILOG(Error, Ops) << "The aggregator \"" << aggregator.aggregatorName << "\" has the same name as one of the Check. This is forbidden." << ENDM;
+      throw std::runtime_error(string("aggregator has the same name as a check: ") + aggregator.aggregatorName);
+    }
+  }
+}
+
 void InfrastructureGenerator::generateAggregator(WorkflowSpec& workflow, const InfrastructureSpec& infrastructureSpec)
 {
-  std::vector<framework::OutputSpec> checkRunnerOutputs;
-  for (const auto& checkSpec : infrastructureSpec.checks) {
-    checkRunnerOutputs.emplace_back(Check::createOutputSpec(checkSpec.checkName));
-  }
-
   if (infrastructureSpec.aggregators.empty()) {
     ILOG(Debug, Devel) << "No \"aggregators\" structure found in the config file. If no quality aggregation is expected, then it is completely fine." << ENDM;
     return;
   }
+
+  // Make sure we don't have duplicated names in the checks and aggregators
+  throwIfAggNamesClashCheckNames(infrastructureSpec);
 
   DataProcessorSpec spec = AggregatorRunnerFactory::create(infrastructureSpec.common, infrastructureSpec.aggregators);
   workflow.emplace_back(spec);
@@ -699,6 +790,10 @@ void InfrastructureGenerator::generatePostProcessing(WorkflowSpec& workflow, con
         ppTask.getOptions()
       };
       dataProcessorSpec.labels.emplace_back(PostProcessingDevice::getLabel());
+      if (!ppTaskSpec.critical) {
+        framework::DataProcessorLabel expendableLabel = { "expendable" };
+        dataProcessorSpec.labels.emplace_back(expendableLabel);
+      }
       dataProcessorSpec.algorithm = adaptFromTask<PostProcessingDevice>(std::move(ppTask));
 
       workflow.emplace_back(std::move(dataProcessorSpec));

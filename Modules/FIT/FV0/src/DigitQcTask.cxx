@@ -25,9 +25,13 @@
 #include "Framework/TimingInfo.h"
 #include "DataFormatsFV0/LookUpTable.h"
 
+#include "FITCommon/HelperHist.h"
+#include "FITCommon/HelperCommon.h"
+#include "FITCommon/HelperFIT.h"
+
 namespace o2::quality_control_modules::fv0
 {
-
+using namespace o2::quality_control_modules::fit;
 DigitQcTask::~DigitQcTask()
 {
   delete mListHistGarbage;
@@ -68,19 +72,23 @@ void DigitQcTask::rebinFromConfig()
 
   const std::string rebinKeyword = "binning";
   const char* channelIdPlaceholder = "#";
-  for (auto& param : mCustomParameters.getAllDefaults()) {
-    if (param.first.rfind(rebinKeyword, 0) != 0)
-      continue;
-    std::string hName = param.first.substr(rebinKeyword.length() + 1);
-    std::string binning = param.second.c_str();
-    if (hName.find(channelIdPlaceholder) != std::string::npos) {
-      for (const auto& chID : mSetAllowedChIDs) {
-        std::string hNameCur = hName.substr(0, hName.find(channelIdPlaceholder)) + std::to_string(chID) + hName.substr(hName.find(channelIdPlaceholder) + 1);
-        rebinHisto(hNameCur, binning);
+  try {
+    for (auto& param : mCustomParameters.getAllDefaults()) {
+      if (param.first.rfind(rebinKeyword, 0) != 0)
+        continue;
+      std::string hName = param.first.substr(rebinKeyword.length() + 1);
+      std::string binning = param.second.c_str();
+      if (hName.find(channelIdPlaceholder) != std::string::npos) {
+        for (const auto& chID : mSetAllowedChIDs) {
+          std::string hNameCur = hName.substr(0, hName.find(channelIdPlaceholder)) + std::to_string(chID) + hName.substr(hName.find(channelIdPlaceholder) + 1);
+          rebinHisto(hNameCur, binning);
+        }
+      } else {
+        rebinHisto(hName, binning);
       }
-    } else {
-      rebinHisto(hName, binning);
     }
+  } catch (std::out_of_range& oor) {
+    ILOG(Error) << "Cannot access the default custom parameters : " << oor.what() << ENDM;
   }
 }
 
@@ -148,6 +156,7 @@ void DigitQcTask::initialize(o2::framework::InitContext& /*ctx*/)
 {
   ILOG(Debug, Devel) << "initialize DigitQcTask" << ENDM; // QcInfoLogger is used. FairMQ logs will go to there as well.
   mStateLastIR2Ch = {};
+
   mMapChTrgNames.insert({ o2::fv0::ChannelData::kNumberADC, "NumberADC" });
   mMapChTrgNames.insert({ o2::fv0::ChannelData::kIsDoubleEvent, "IsDoubleEvent" });
   mMapChTrgNames.insert({ o2::fv0::ChannelData::kIsTimeInfoNOTvalid, "IsTimeInfoNOTvalid" });
@@ -217,23 +226,23 @@ void DigitQcTask::initialize(o2::framework::InitContext& /*ctx*/)
   mHistPmTcmSumAmpA = std::make_unique<TH2F>("PmTcmSumAmpA", "Comparison of sum of amplitudes A from PM and TCM;Sum of amplitudes(TCM), side A;PM - TCM", 2e2, 0, 1e4, 2e3, -1e3 - 0.5, 1e3 - 0.5);
   mHistPmTcmAverageTimeA = std::make_unique<TH2F>("PmTcmAverageTimeA", "Comparison of average time A from PM and TCM;Average time(TCM), side A;PM - TCM", 410, -2050, 2050, 820, -410 - 0.5, 410 - 0.5);
   mHistTriggersSw = std::make_unique<TH1F>("TriggersSoftware", "Triggers from software", mMapDigitTrgNames.size(), 0, mMapDigitTrgNames.size());
-  mHistTriggersSoftwareVsTCM = std::make_unique<TH2F>("TriggersSoftwareVsTCM", "Comparison of triggers from software and TCM;;Trigger name", mMapDigitTrgNames.size(), 0, mMapDigitTrgNames.size(), 4, 0, 4);
-  mHistTriggersSoftwareVsTCM->SetOption("colz");
-  mHistTriggersSoftwareVsTCM->SetStats(1);
+
+  const auto mapBasicTrgBits = HelperTrgFIT::sMapBasicTrgBitsFV0;
+  const std::map<unsigned int, std::string> mapTrgValidationStatus = {
+    { TrgComparisonResult::kSWonly, "Sw only" },
+    { TrgComparisonResult::kTCMonly, "TCM only" },
+    { TrgComparisonResult::kNone, "neither TCM nor Sw" },
+    { TrgComparisonResult::kBoth, "both TCM and Sw" }
+  };
+  mHistTriggersSoftwareVsTCM = helper::registerHist<TH2F>(getObjectsManager(), "COLZ", "TriggersSoftwareVsTCM", "Comparison of triggers from software and TCM;;Trigger name", mapBasicTrgBits, mapTrgValidationStatus);
   for (const auto& entry : mMapDigitTrgNames) {
     mHistOrbitVsTrg->GetYaxis()->SetBinLabel(entry.first + 1, entry.second.c_str());
     mHistTriggersCorrelation->GetXaxis()->SetBinLabel(entry.first + 1, entry.second.c_str());
     mHistTriggersCorrelation->GetYaxis()->SetBinLabel(entry.first + 1, entry.second.c_str());
     mHistBCvsTrg->GetYaxis()->SetBinLabel(entry.first + 1, entry.second.c_str());
     mHistTriggersSw->GetXaxis()->SetBinLabel(entry.first + 1, entry.second.c_str());
-    mHistTriggersSoftwareVsTCM->GetXaxis()->SetBinLabel(entry.first + 1, entry.second.c_str());
   }
   mHistTriggersSw->GetXaxis()->SetRange(1, 5);
-  mHistTriggersSoftwareVsTCM->GetXaxis()->SetRange(1, 5);
-  mHistTriggersSoftwareVsTCM->GetYaxis()->SetBinLabel(TrgComparisonResult::kSWonly + 1, "Sw only");
-  mHistTriggersSoftwareVsTCM->GetYaxis()->SetBinLabel(TrgComparisonResult::kTCMonly + 1, "TCM only");
-  mHistTriggersSoftwareVsTCM->GetYaxis()->SetBinLabel(TrgComparisonResult::kNone + 1, "neither TCM nor Sw");
-  mHistTriggersSoftwareVsTCM->GetYaxis()->SetBinLabel(TrgComparisonResult::kBoth + 1, "both TCM and Sw");
 
   mListHistGarbage = new TList();
   mListHistGarbage->SetOwner(kTRUE);
@@ -400,8 +409,6 @@ void DigitQcTask::initialize(o2::framework::InitContext& /*ctx*/)
   getObjectsManager()->setDefaultDrawOptions(mHistPmTcmAverageTimeA.get(), "COLZ");
   getObjectsManager()->startPublishing(mHistTriggersCorrelation.get());
   getObjectsManager()->setDefaultDrawOptions(mHistTriggersCorrelation.get(), "COLZ");
-  getObjectsManager()->startPublishing(mHistTriggersSoftwareVsTCM.get());
-  getObjectsManager()->setDefaultDrawOptions(mHistTriggersSoftwareVsTCM.get(), "COLZ");
 
   for (int i = 0; i < getObjectsManager()->getNumberPublishedObjects(); i++) {
     TH1* obj = dynamic_cast<TH1*>(getObjectsManager()->getMonitorObject(i)->getObject());

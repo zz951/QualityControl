@@ -19,11 +19,10 @@
 #include "ITS/ITSFeeCheck.h"
 #include "QualityControl/MonitorObject.h"
 #include "QualityControl/Quality.h"
+#include "QualityControl/QcInfoLogger.h"
 
 #include <fairlogger/Logger.h>
-#include <TList.h>
 #include <TH2.h>
-#include <iostream>
 #include "Common/Utils.h"
 
 namespace o2::quality_control_modules::its
@@ -41,6 +40,10 @@ Quality ITSFeeCheck::check(std::map<std::string, std::shared_ptr<MonitorObject>>
       if (mo->getName() == Form("LaneStatus/laneStatusFlag%s", mLaneStatusFlag[iflag].c_str())) {
         result = Quality::Good;
         auto* h = dynamic_cast<TH2I*>(mo->getObject());
+        if (h == nullptr) {
+          ILOG(Error, Support) << "could not cast LaneStatusFlag to TH2I*" << ENDM;
+          continue;
+        }
         if (h->GetMaximum() > 0) {
           result.set(Quality::Bad);
         }
@@ -48,6 +51,10 @@ Quality ITSFeeCheck::check(std::map<std::string, std::shared_ptr<MonitorObject>>
       if (mo->getName() == Form("LaneStatus/laneStatusOverviewFlag%s", mLaneStatusFlag[iflag].c_str())) {
         result.set(Quality::Good);
         auto* hp = dynamic_cast<TH2Poly*>(mo->getObject());
+        if (hp == nullptr) {
+          ILOG(Error, Support) << "could not cast TrailerCount to THPollyF*" << ENDM;
+          continue;
+        }
         badStaveIB = false;
         badStaveML = false;
         badStaveOL = false;
@@ -115,6 +122,10 @@ Quality ITSFeeCheck::check(std::map<std::string, std::shared_ptr<MonitorObject>>
     if (mo->getName() == "LaneStatusSummary/LaneStatusSummaryGlobal") {
       result = Quality::Good;
       auto* h = dynamic_cast<TH1D*>(mo->getObject());
+      if (h == nullptr) {
+        ILOG(Error, Support) << "could not cast LaneStatusSummaryGlobal to TH1D*" << ENDM;
+        continue;
+      }
       result.addMetadata("SummaryGlobal", "good");
       maxfractionbadlanes = o2::quality_control_modules::common::getFromConfig<float>(mCustomParameters, "maxfractionbadlanes", maxfractionbadlanes);
       if (h->GetBinContent(1) + h->GetBinContent(2) + h->GetBinContent(3) > maxfractionbadlanes) {
@@ -134,42 +145,87 @@ Quality ITSFeeCheck::check(std::map<std::string, std::shared_ptr<MonitorObject>>
     if (mo->getName() == "TriggerVsFeeid") {
       result.set(Quality::Good);
       auto* h = dynamic_cast<TH2I*>(mo->getObject());
-      int counttrgflags[NTrg] = { 0 };
-      int cutvalue[NTrg] = { 432, 432, 0, 0, 432, 0, 0, 0, 0, 432, 0, 432, 0 };
+      if (h == nullptr) {
+        ILOG(Error, Support) << "could not cast TriggerVsFeeid to TH2I*" << ENDM;
+        continue;
+      }
 
       std::vector<int> skipbins = convertToArray<int>(o2::quality_control_modules::common::getFromConfig<string>(mCustomParameters, "skipbinstrg", skipbinstrg));
       std::vector<int> skipfeeid = convertToArray<int>(o2::quality_control_modules::common::getFromConfig<string>(mCustomParameters, "skipfeeids", skipfeeids));
+      maxtfdifference = o2::quality_control_modules::common::getFromConfig<int>(mCustomParameters, "maxTFdifferenceAllowed", maxtfdifference);
+
       for (int itrg = 1; itrg <= h->GetNbinsY(); itrg++) {
         result.addMetadata(h->GetYaxis()->GetBinLabel(itrg), "good");
-        for (int ifee = 1; ifee <= h->GetNbinsX(); ifee++) {
-          if (h->GetBinContent(ifee, itrg) > 0) {
-            counttrgflags[itrg - 1]++;
-          }
-        }
       }
+
+      TString TrgAtLeastOne = "ORBIT HB PHYSICS TF";
+      TString TrgExactlyOne = "SOC";
+      // The others are requested to have no entries
+
+      int min_n_tf = INT_MAX, max_n_tf = 0;
 
       for (int itrg = 0; itrg < h->GetNbinsY(); itrg++) {
         if (std::find(skipbins.begin(), skipbins.end(), itrg + 1) != skipbins.end()) {
           continue;
         }
+
         bool badTrigger = false;
-        if ((itrg == 0 || itrg == 1 || itrg == 4 || itrg == 9 || itrg == 11) && counttrgflags[itrg] < cutvalue[itrg] - (int)skipfeeid.size()) {
-          result.updateMetadata(h->GetYaxis()->GetBinLabel(itrg + 1), "bad");
-          result.set(Quality::Bad);
-          badTrigger = true;
-        } else if ((itrg == 2 || itrg == 3 || itrg == 5 || itrg == 6 || itrg == 7 || itrg == 8 || itrg == 10 || itrg == 12) && counttrgflags[itrg] > cutvalue[itrg]) {
-          result.updateMetadata(h->GetYaxis()->GetBinLabel(itrg + 1), "bad");
-          result.set(Quality::Bad);
-          badTrigger = true;
+
+        TString trgname = (TString)(h->GetYaxis()->GetBinLabel(itrg + 1));
+
+        for (int ifee = 1; ifee <= h->GetNbinsX(); ifee++) {
+
+          if (std::find(skipfeeid.begin(), skipfeeid.end(), ifee) != skipfeeid.end())
+            continue;
+
+          int bincontent = (int)(h->GetBinContent(ifee, itrg + 1));
+
+          // checking trigger flags supposed to have at least one entry
+          if (TrgAtLeastOne.Contains(trgname)) {
+            if (bincontent < 1) {
+              badTrigger = true;
+              break;
+            }
+          }
+          // checking trigger flags supposed to have exactly one entry
+          else if (TrgExactlyOne.Contains(trgname)) {
+            if (bincontent != 1) {
+              badTrigger = true;
+              break;
+            }
+          }
+          // checking trigger flags supposed to have no entries
+          else {
+            if (bincontent > 0) {
+              badTrigger = true;
+              break;
+            }
+          }
+
+          if (trgname == "TF" && maxtfdifference > 0) {
+            min_n_tf = std::min(min_n_tf, bincontent);
+            max_n_tf = std::max(max_n_tf, bincontent);
+          }
         }
-        std::string extraText = (!strcmp(h->GetYaxis()->GetBinLabel(itrg + 1), "PHYSICS")) ? "(OK if it's COSMICS/SYNTHETIC)" : "";
-        if (badTrigger)
+
+        if (trgname == "TF" && maxtfdifference > 0 && (max_n_tf - min_n_tf > maxtfdifference))
+          badTrigger = true;
+
+        if (badTrigger) {
+          result.updateMetadata(h->GetYaxis()->GetBinLabel(itrg + 1), "bad");
+          result.set(Quality::Bad);
+          std::string extraText = (!strcmp(h->GetYaxis()->GetBinLabel(itrg + 1), "PHYSICS")) ? "(OK if it's COSMICS/SYNTHETIC)" : "";
           result.addReason(o2::quality_control::FlagReasonFactory::Unknown(), Form("BAD:Trigger flag %s of bad quality %s", h->GetYaxis()->GetBinLabel(itrg + 1), extraText.c_str()));
+        }
       }
     }
 
     if (mo->getName() == "PayloadSize") {
       auto* h = dynamic_cast<TH2F*>(mo->getObject());
+      if (h == nullptr) {
+        ILOG(Error, Support) << "could not cast PayloadSize to TH2F*" << ENDM;
+        continue;
+      }
       result.set(Quality::Good);
       result.addMetadata("CheckTechnicals", "good");
       result.addMetadata("CheckTechnicalsFeeid", "good");
@@ -191,6 +247,22 @@ Quality ITSFeeCheck::check(std::map<std::string, std::shared_ptr<MonitorObject>>
       if (countFeeids < 432 - (int)skipfeeid.size()) {
         result.set(Quality::Bad);
         result.updateMetadata("CheckTechnicalsFeeid", "bad");
+      }
+    }
+
+    if (mo->getName() == "TrailerCount") {
+      auto* h = dynamic_cast<TH2I*>(mo->getObject());
+      if (h == nullptr) {
+        ILOG(Error, Support) << "could not cast TrailerCount to TH2I*" << ENDM;
+        continue;
+      }
+      result.set(Quality::Good);
+      result.addMetadata("CheckROFRate", "good");
+      expectedROFperOrbit = o2::quality_control_modules::common::getFromConfig<int>(mCustomParameters, "expectedROFperOrbit", expectedROFperOrbit);
+      if (h->Integral(1, 432, 1, h->GetYaxis()->FindBin(expectedROFperOrbit) - 1) > 0 || h->Integral(1, 432, h->GetYaxis()->FindBin(expectedROFperOrbit) + 1, h->GetYaxis()->GetLast()) > 0) {
+        result.set(Quality::Bad);
+        result.updateMetadata("expectedROFperOrbit", "bad");
+        result.addReason(o2::quality_control::FlagReasonFactory::Unknown(), "ITS seems to be misconfigured");
       }
     }
   } // end loop on MOs
@@ -224,6 +296,10 @@ void ITSFeeCheck::beautify(std::shared_ptr<MonitorObject> mo, Quality checkResul
   for (int iflag = 0; iflag < NFlags; iflag++) {
     if (mo->getName() == Form("LaneStatus/laneStatusFlag%s", mLaneStatusFlag[iflag].c_str())) {
       auto* h = dynamic_cast<TH2I*>(mo->getObject());
+      if (h == nullptr) {
+        ILOG(Error, Support) << "could not cast LaneSatusFlag to TH2I*" << ENDM;
+        continue;
+      }
       if (checkResult == Quality::Good) {
         status = "Quality::GOOD";
         textColor = kGreen;
@@ -242,6 +318,10 @@ void ITSFeeCheck::beautify(std::shared_ptr<MonitorObject> mo, Quality checkResul
     }
     if (mo->getName() == Form("LaneStatus/laneStatusOverviewFlag%s", mLaneStatusFlag[iflag].c_str())) {
       auto* hp = dynamic_cast<TH2Poly*>(mo->getObject());
+      if (hp == nullptr) {
+        ILOG(Error, Support) << "could not cast LaneSatusOverview to THPolly*" << ENDM;
+        continue;
+      }
       if (checkResult == Quality::Good) {
         status = "Quality::GOOD";
         textColor = kGreen;
@@ -312,6 +392,10 @@ void ITSFeeCheck::beautify(std::shared_ptr<MonitorObject> mo, Quality checkResul
   } // end flags
   if (mo->getName() == "LaneStatusSummary/LaneStatusSummaryGlobal") {
     auto* h = dynamic_cast<TH1D*>(mo->getObject());
+    if (h == nullptr) {
+      ILOG(Error, Support) << "could not cast LaneSatutsSummaryGlobal to TH1D*" << ENDM;
+      return;
+    }
     if (checkResult == Quality::Good) {
       status = "Quality::GOOD";
       textColor = kGreen;
@@ -339,6 +423,10 @@ void ITSFeeCheck::beautify(std::shared_ptr<MonitorObject> mo, Quality checkResul
   }
   if (mo->getName() == Form("RDHSummary")) {
     auto* h = dynamic_cast<TH2I*>(mo->getObject());
+    if (h == nullptr) {
+      ILOG(Error, Support) << "could not cast RDHSummary to TH2I*" << ENDM;
+      return;
+    }
     if (checkResult == Quality::Good) {
       status = "Quality::GOOD";
       textColor = kGreen;
@@ -359,6 +447,10 @@ void ITSFeeCheck::beautify(std::shared_ptr<MonitorObject> mo, Quality checkResul
   // trigger plot
   if (mo->getName() == "TriggerVsFeeid") {
     auto* h = dynamic_cast<TH2I*>(mo->getObject());
+    if (h == nullptr) {
+      ILOG(Error, Support) << "could not cast TriggerVsFeeId to TH2I*" << ENDM;
+      return;
+    }
     if (checkResult == Quality::Good) {
       status = "Quality::GOOD";
       textColor = kGreen;
@@ -391,6 +483,10 @@ void ITSFeeCheck::beautify(std::shared_ptr<MonitorObject> mo, Quality checkResul
   // payload size plot
   if (mo->getName() == "PayloadSize") {
     auto* h = dynamic_cast<TH2F*>(mo->getObject());
+    if (h == nullptr) {
+      ILOG(Error, Support) << "could not cast PayloadSize to TH2F*" << ENDM;
+      return;
+    }
     if (checkResult == Quality::Good) {
       status = "Quality::GOOD";
       textColor = kGreen;
@@ -413,6 +509,35 @@ void ITSFeeCheck::beautify(std::shared_ptr<MonitorObject> mo, Quality checkResul
         tInfoPL[1]->SetTextColor(kRed);
         h->GetListOfFunctions()->Add(tInfoPL[1]->Clone());
       }
+    }
+    tInfo = std::make_shared<TLatex>(0.05, 0.95, Form("#bf{%s}", status.Data()));
+    tInfo->SetTextColor(textColor);
+    tInfo->SetTextSize(0.06);
+    tInfo->SetTextFont(43);
+    tInfo->SetNDC();
+    h->GetListOfFunctions()->Add(tInfo->Clone());
+    if (ShifterInfoText[mo->getName()] != "")
+      h->GetListOfFunctions()->Add(tShifterInfo->Clone());
+  }
+
+  if (mo->getName() == "TrailerCount") {
+    auto* h = dynamic_cast<TH2I*>(mo->getObject());
+    if (h == nullptr) {
+      ILOG(Error, Support) << "could not cast TrailerCount to TH2F*" << ENDM;
+      return;
+    }
+    if (checkResult == Quality::Good) {
+      status = "Quality::GOOD";
+      textColor = kGreen;
+    } else {
+      status = "Quality::Bad (call expert)";
+      textColor = kRed;
+      tInfoPL[1] = std::make_shared<TLatex>(0.3, 0.55, "MISCONFIGURATION. CALL EXPERTS.");
+      tInfoPL[1]->SetNDC();
+      tInfoPL[1]->SetTextFont(43);
+      tInfoPL[1]->SetTextSize(0.04);
+      tInfoPL[1]->SetTextColor(kRed);
+      h->GetListOfFunctions()->Add(tInfoPL[1]->Clone());
     }
     tInfo = std::make_shared<TLatex>(0.05, 0.95, Form("#bf{%s}", status.Data()));
     tInfo->SetTextColor(textColor);

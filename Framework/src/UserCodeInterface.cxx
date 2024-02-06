@@ -10,7 +10,7 @@
 // or submit itself to any jurisdiction.
 
 ///
-/// \file   CommonInterface.cxx
+/// \file   UserCodeInterface.cxx
 /// \author Barthelemy von Haller
 ///
 
@@ -25,11 +25,6 @@ void UserCodeInterface::setCustomParameters(const CustomParameters& parameters)
 {
   mCustomParameters = parameters;
   configure();
-}
-
-void UserCodeInterface::setCcdbUrl(const std::string& url)
-{
-  o2::ccdb::BasicCCDBManager::instance().setURL(url);
 }
 
 const std::string& UserCodeInterface::getName() const { return mName; }

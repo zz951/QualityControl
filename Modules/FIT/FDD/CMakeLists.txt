@@ -11,7 +11,7 @@ target_sources(O2QcFDD PRIVATE
                                src/CFDEffCheck.cxx
                                src/OutOfBunchCollCheck.cxx
                                src/TriggersSwVsTcmCheck.cxx
-                               )
+                               src/OutOfBunchCollFeeModulesCheck.cxx)
 
 target_include_directories(
   O2QcFDD
@@ -19,7 +19,7 @@ target_include_directories(
          $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-target_link_libraries(O2QcFDD PUBLIC O2QualityControl O2QcCommon)
+target_link_libraries(O2QcFDD PUBLIC O2QualityControl O2QcCommon O2QcFITCommon)
 
 install(TARGETS O2QcFDD
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -37,6 +37,7 @@ add_root_dictionary(O2QcFDD
           include/FDD/CFDEffCheck.h
           include/FDD/OutOfBunchCollCheck.h
           include/FDD/TriggersSwVsTcmCheck.h
+          include/FDD/OutOfBunchCollFeeModulesCheck.h
   LINKDEF include/FDD/LinkDef.h)
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/FDD

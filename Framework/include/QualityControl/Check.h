@@ -60,6 +60,7 @@ class Check
    * Expected to run in the init phase of the FairDevice
    */
   void init();
+  void reset();
 
   core::QualityObjectsType check(std::map<std::string, std::shared_ptr<o2::quality_control::core::MonitorObject>>& moMap);
 
@@ -68,7 +69,8 @@ class Check
   o2::framework::Inputs getInputs() const { return mCheckConfig.inputSpecs; };
   const std::string& getDetector() const { return mCheckConfig.detectorName; };
   const CheckConfig& getConfig() const { return mCheckConfig; };
-  void setActivity(std::shared_ptr<core::Activity> activity);
+  void startOfActivity(const core::Activity& activity);
+  void endOfActivity(const core::Activity& activity);
 
   //TODO: Unique Input string
   static o2::header::DataDescription createCheckDataDescription(const std::string& checkName);

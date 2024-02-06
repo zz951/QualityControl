@@ -14,22 +14,19 @@
 
 #include "QualityControl/TaskInterface.h"
 #include <MCHRawElecMap/Mapper.h>
-#include <TH1F.h>
-#include <TProfile.h>
 #include <gsl/span>
 #include <memory>
 #include "MCHGeometryTransformer/Transformations.h"
 #include "MUONCommon/HistPlotter.h"
+#include <TProfile.h>
+#include <TH1F.h>
 
 namespace o2::mch
 {
 class Cluster;
-class TrackMCH;
 } // namespace o2::mch
 
 using namespace o2::quality_control::core;
-
-class TH1F;
 
 namespace o2::quality_control_modules::muonchambers
 {
@@ -51,14 +48,6 @@ class ClustersTask /*final*/ : public TaskInterface
  private:
   /** check whether all the expected inputs are present.*/
   bool assertInputs(o2::framework::ProcessingContext& ctx);
-
-  /** create one histogram with relevant drawing options / stat box status.*/
-  template <typename T>
-  std::unique_ptr<T> createHisto(const char* name, const char* title,
-                                 int nbins, double xmin, double xmax,
-                                 bool statBox = false,
-                                 const char* drawOptions = "",
-                                 const char* displayHints = "");
 
   /** create histograms related to clusters (those attached to tracks) */
   void createClusterHistos();

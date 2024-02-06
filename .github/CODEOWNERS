@@ -6,8 +6,8 @@
 /Modules/PID/      @njacazio
 /Modules/EMCAL/    @mfasDa @jokonig @Barthelemy @knopers8
 /Modules/TPC/      @wiechula
-/Modules/MFT/      @tomas-herman
+/Modules/MFT/      @diana0x0f
 /Modules/ITS/      @iravasen @IsakovAD
-/Modules/TRD/      @pachmay @bazinski
+/Modules/TRD/      @martenole @bazinski
 /Modules/FOCAL/    @mfasDa @fjonasALICE
-
+/Modules/FIT/      @andreasmolander @afurs @jotwinow

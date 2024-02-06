@@ -21,7 +21,6 @@
 
 #include "QualityControl/PostProcessingInterface.h"
 #include "QualityControl/SliceReductor.h"
-#include "QualityControl/SliceInfoTrending.h"
 #include "QualityControl/SliceTrendingTaskConfig.h"
 
 #include <memory>
@@ -29,8 +28,11 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
-#include <TCanvas.h>
 #include <TTree.h>
+
+class TCanvas;
+class TObject;
+class TLegend;
 
 namespace o2::quality_control::repository
 {
@@ -66,12 +68,20 @@ class SliceTrendingTask : public PostProcessingInterface
   struct MetaData {
     Int_t runNumber = 0;
   };
+  struct TitleSettings {
+    std::string observableX;
+    std::string observableY;
+    std::string unitX;
+    std::string unitY;
+    std::string centmodeX;
+    std::string centmodeY;
+  };
 
   /// \brief Methods specific to the trending itself.
   void trendValues(const Trigger& t, o2::quality_control::repository::DatabaseInterface&);
   void generatePlots();
   void drawCanvasMO(TCanvas* thisCanvas, const std::string& var,
-                    const std::string& name, const std::string& opt, const std::string& err, const std::vector<std::vector<float>>& axis);
+                    const std::string& name, const std::string& opt, const std::string& err, const std::vector<std::vector<float>>& axis, const TitleSettings& titlesettings);
   void getUserAxisRange(const std::string& graphAxisRange, float& limitLow, float& limitUp);
   void setUserAxisLabel(TAxis* xAxis, TAxis* yAxis, const std::string& graphAxisLabel);
   void getTrendVariables(const std::string& inputvar, std::string& sourceName, std::string& variableName, std::string& trend);
@@ -80,6 +90,8 @@ class SliceTrendingTask : public PostProcessingInterface
 
   template <typename T>
   void beautifyGraph(T& graph, const SliceTrendingTaskConfig::Plot& plotconfig, TCanvas* canv); // beautify function for TGraphs and TMultiGraphs
+  void beautifyLegend(TLegend* geg, const SliceTrendingTaskConfig::Plot& plotconfig, TCanvas* canv);
+  std::string beautifyTitle(const std::string_view rawtitle, const TitleSettings& titleSettings);
 
   SliceTrendingTaskConfig mConfig;
   MetaData mMetaData;

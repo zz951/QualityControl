@@ -15,24 +15,21 @@
 
 #include "MCH/PreclustersCheck.h"
 #include "MCH/Helpers.h"
-#include "MCHMappingInterface/Segmentation.h"
-#include "MCHMappingSegContour/CathodeSegmentationContours.h"
-#include "MUONCommon/MergeableTH2Ratio.h"
+#include <MCHConstants/DetectionElements.h>
+#include <MCHRawElecMap/Mapper.h>
+#include "QualityControl/QcInfoLogger.h"
+#include "QualityControl/MonitorObject.h"
 
 // ROOT
-#include <fairlogger/Logger.h>
 #include <TCanvas.h>
 #include <TH1F.h>
 #include <TH2F.h>
 #include <TList.h>
 #include <TLine.h>
-#include <TMath.h>
-#include <iostream>
 #include <fstream>
 #include <string>
 
 using namespace std;
-using namespace o2::quality_control_modules::muon;
 
 namespace o2::quality_control_modules::muonchambers
 {
@@ -158,10 +155,10 @@ std::array<Quality, getNumDE()> PreclustersCheck::checkMeanEfficienciesRatio(TH1
 
 Quality PreclustersCheck::check(std::map<std::string, std::shared_ptr<MonitorObject>>* moMap)
 {
-  ILOG(Info, Devel) << "Entered PreclustersCheck::check" << ENDM;
-  ILOG(Info, Devel) << "   received a list of size : " << moMap->size() << ENDM;
+  ILOG(Debug, Devel) << "Entered PreclustersCheck::check" << ENDM;
+  ILOG(Debug, Devel) << "   received a list of size : " << moMap->size() << ENDM;
   for (const auto& item : *moMap) {
-    ILOG(Info, Devel) << "Object: " << item.second->getName() << ENDM;
+    ILOG(Debug, Devel) << "Object: " << item.second->getName() << ENDM;
   }
 
   mQualityChecker.reset();

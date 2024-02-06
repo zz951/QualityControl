@@ -22,6 +22,7 @@
 #include "QualityControl/ActivityHelpers.h"
 #include "QualityControl/Activity.h"
 #include <Common/Exceptions.h>
+#include "QualityControl/CommonSpec.h"
 
 #include <utility>
 
@@ -46,6 +47,7 @@ void Aggregator::init()
       root_class_factory::create<AggregatorInterface>(mAggregatorConfig.moduleName, mAggregatorConfig.className);
     mAggregatorInterface->setName(mAggregatorConfig.name);
     mAggregatorInterface->setCustomParameters(mAggregatorConfig.customParameters);
+    mAggregatorInterface->setCcdbUrl(mAggregatorConfig.conditionUrl);
     mAggregatorInterface->configure();
   } catch (...) {
     std::string diagnostic = boost::current_exception_diagnostic_information();
@@ -77,8 +79,8 @@ QualityObjectsMapType Aggregator::filter(QualityObjectsMapType& qoMap)
     // find the source for this qo
     shared_ptr<const QualityObject> local = qo;
     auto it = std::find_if(mAggregatorConfig.sources.begin(), mAggregatorConfig.sources.end(),
-                           [&local](const AggregatorSource source) {
-                             std::string token = local->getCheckName().substr(0, local->getCheckName().find("/"));
+                           [&local](const AggregatorSource& source) {
+                             const std::string token = local->getCheckName().substr(0, local->getCheckName().find('/'));
                              return token == source.name;
                            });
 
@@ -170,7 +172,7 @@ std::vector<AggregatorSource> Aggregator::getSources(core::DataSourceType type)
   return matches;
 }
 
-AggregatorConfig Aggregator::extractConfig(const core::CommonSpec&, const AggregatorSpec& aggregatorSpec)
+AggregatorConfig Aggregator::extractConfig(const core::CommonSpec& commonSpec, const AggregatorSpec& aggregatorSpec)
 {
   framework::Inputs inputs;
   std::vector<std::string> objectNames;
@@ -217,8 +219,27 @@ AggregatorConfig Aggregator::extractConfig(const core::CommonSpec&, const Aggreg
     std::move(objectNames),
     checkAllObjects,
     std::move(inputs),
-    sources
+    sources,
+    commonSpec.conditionDBUrl
   };
+}
+
+void Aggregator::startOfActivity(const core::Activity& activity)
+{
+  if (mAggregatorInterface) {
+    mAggregatorInterface->startOfActivity(activity);
+  } else {
+    throw std::runtime_error("Trying to start an Activity on an empty AggregatorInterface '" + mAggregatorConfig.name + "'");
+  }
+}
+
+void Aggregator::endOfActivity(const core::Activity& activity)
+{
+  if (mAggregatorInterface) {
+    mAggregatorInterface->endOfActivity(activity);
+  } else {
+    throw std::runtime_error("Trying to end an Activity on an empty AggregatorInterface '" + mAggregatorConfig.name + "'");
+  }
 }
 
 } // namespace o2::quality_control::checker
